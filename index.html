@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DBMaster Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0d12;--surface:#111620;--surface2:#181e2a;--surface3:#1e2535;
+  --border:rgba(99,195,255,0.10);--border2:rgba(99,195,255,0.20);--border3:rgba(99,195,255,0.35);
+  --accent:#3B8BEB;--accent2:#00c9a7;--accent3:#f59e0b;--danger:#e24b4a;
+  --text:#e8edf5;--muted:#6b7a93;--muted2:#8fa0b8;
+  --mono:'Space Mono',monospace;--sans:'DM Sans',sans-serif;
+  --r:8px;--r2:10px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+input,select,button,textarea{font-family:var(--sans)}
+
+/* ── Layout ── */
+#app{display:flex;flex-direction:column;height:100vh}
+.topbar{display:flex;align-items:center;padding:0 20px;height:50px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;gap:14px}
+.logo{display:flex;align-items:center;gap:8px}
+.logo-box{width:28px;height:28px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.logo-box svg{width:16px;height:16px}
+.logo-name{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.04em}
+.logo-ver{font-size:10px;color:var(--muted);font-family:var(--mono);margin-left:4px}
+.topbar-mid{flex:1;display:flex;align-items:center;justify-content:center;gap:20px}
+.api-status{display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono)}
+.status-dot{width:7px;height:7px;border-radius:50%}
+.dot-ok{background:var(--accent2);animation:pulse 2s infinite}
+.dot-err{background:var(--danger)}
+.dot-spin{background:var(--accent3);animation:spin-dot 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin-dot{0%{transform:scale(1)}50%{transform:scale(.5)}100%{transform:scale(1)}}
+
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:210px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto}
+.sidebar-section{font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.08em;padding:14px 16px 5px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 16px;font-size:13px;color:var(--muted);cursor:pointer;border-left:2px solid transparent;transition:all .13s;user-select:none}
+.nav-item:hover{background:rgba(255,255,255,.03);color:var(--text)}
+.nav-item.active{background:rgba(59,139,235,.09);color:#7fb8f5;border-left-color:var(--accent)}
+.nav-item svg{width:14px;height:14px;flex-shrink:0}
+.nav-badge{margin-left:auto;background:var(--danger);color:white;font-size:10px;min-width:18px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+.sidebar-footer{margin-top:auto;padding:12px 16px;border-top:1px solid var(--border)}
+.sf-label{font-size:11px;color:var(--muted);margin-bottom:5px}
+.sf-bar{height:3px;background:rgba(255,255,255,.07);border-radius:2px}
+.sf-fill{height:3px;background:var(--accent);border-radius:2px;transition:width .3s}
+
+.main{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+
+/* ── Panels ── */
+.page-title{font-size:17px;font-weight:500}
+.page-sub{font-size:12px;color:var(--muted);margin-top:3px;font-family:var(--mono)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;border-bottom:1px solid var(--border)}
+.panel-title{font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
+.panel-title svg{width:13px;height:13px;opacity:.7}
+
+/* ── Form ── */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px 16px}
+.form-grid.cols3{grid-template-columns:1fr 1fr 1fr}
+.form-grid.cols1{grid-template-columns:1fr}
+.field{display:flex;flex-direction:column;gap:4px}
+.field.span2{grid-column:span 2}
+.field label{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.field input,.field select,.field textarea{
+  background:var(--surface2);border:1px solid var(--border2);color:var(--text);
+  padding:8px 10px;border-radius:var(--r);font-size:12px;font-family:var(--mono);
+  outline:none;transition:border .15s;width:100%
+}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+.field input::placeholder{color:var(--muted)}
+.field select option{background:var(--surface2)}
+.field textarea{resize:vertical;min-height:80px;font-size:11px;line-height:1.6}
+
+/* ── Buttons ── */
+.btn{padding:8px 16px;border-radius:var(--r);font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all .15s;display:inline-flex;align-items:center;gap:6px}
+.btn svg{width:13px;height:13px}
+.btn-primary{background:var(--accent);color:white}
+.btn-primary:hover{background:#2d7adf}
+.btn-primary:disabled{background:rgba(59,139,235,.3);cursor:not-allowed}
+.btn-success{background:var(--accent2);color:#04342C}
+.btn-success:hover{background:#00b898}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border2)}
+.btn-ghost:hover{background:rgba(255,255,255,.04);color:var(--text)}
+.btn-danger{background:rgba(226,75,74,.12);color:#ef8787;border:1px solid rgba(226,75,74,.25)}
+.btn-danger:hover{background:rgba(226,75,74,.2)}
+.btn-row{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+
+/* ── Badges / Tags ── */
+.tag{font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:3px;display:inline-block}
+.tag-ok{background:rgba(0,201,167,.1);color:#00c9a7;border:1px solid rgba(0,201,167,.22)}
+.tag-err{background:rgba(226,75,74,.1);color:#ef8787;border:1px solid rgba(226,75,74,.22)}
+.tag-warn{background:rgba(245,158,11,.1);color:#fbbf24;border:1px solid rgba(245,158,11,.22)}
+.tag-info{background:rgba(59,139,235,.1);color:#7fb8f5;border:1px solid rgba(59,139,235,.22)}
+.tag-run{background:rgba(59,139,235,.1);color:#7fb8f5;border:1px solid rgba(59,139,235,.22);animation:blink-b .8s infinite}
+@keyframes blink-b{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* ── Engine pills ── */
+.eng{width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:var(--mono);font-weight:700;flex-shrink:0}
+.eng-mysql{background:rgba(255,152,0,.13);color:#ff9800;border:1px solid rgba(255,152,0,.28)}
+.eng-postgresql{background:rgba(59,139,235,.13);color:#7fb8f5;border:1px solid rgba(59,139,235,.28)}
+.eng-mssql{background:rgba(226,75,74,.13);color:#ef8787;border:1px solid rgba(226,75,74,.28)}
+.eng-mongodb{background:rgba(0,201,167,.12);color:#00c9a7;border:1px solid rgba(0,201,167,.25)}
+
+/* ── Tables ── */
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{padding:8px 12px;font-family:var(--mono);font-size:10px;color:var(--muted);border-bottom:1px solid var(--border);text-align:left;background:var(--surface2);white-space:nowrap}
+.data-table td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--muted2);vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:rgba(255,255,255,.02)}
+.data-table td:first-child{color:var(--text);font-family:var(--mono);font-size:11px}
+.data-table input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px}
+
+/* ── Terminal ── */
+.terminal{background:#060910;border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;font-family:var(--mono);font-size:11px;line-height:1.75;max-height:220px;overflow-y:auto;scroll-behavior:smooth}
+.t-ts{color:#2d3a50;margin-right:6px}
+.t-ok{color:var(--accent2)}
+.t-info{color:#7fb8f5}
+.t-warn{color:#fbbf24}
+.t-err{color:#ef8787}
+.t-dim{color:#3a4a62}
+.t-cursor{display:inline-block;width:7px;height:12px;background:var(--accent2);animation:blink-c .9s infinite;vertical-align:text-bottom;margin-left:2px}
+@keyframes blink-c{0%,100%{opacity:1}50%{opacity:0}}
+
+/* ── Progress ── */
+.prog-wrap{padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.prog-item{display:flex;flex-direction:column;gap:4px}
+.prog-row{display:flex;justify-content:space-between;align-items:center}
+.prog-label{font-size:12px;color:var(--text)}
+.prog-pct{font-size:11px;font-family:var(--mono);color:var(--muted)}
+.prog-track{height:3px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden}
+.prog-fill{height:3px;border-radius:2px;transition:width .4s ease}
+
+/* ── Alert box ── */
+.alert{padding:11px 14px;border-radius:var(--r);font-size:12px;line-height:1.6;display:flex;align-items:flex-start;gap:10px}
+.alert svg{width:14px;height:14px;flex-shrink:0;margin-top:1px}
+.alert-ok{background:rgba(0,201,167,.08);border:1px solid rgba(0,201,167,.22)}
+.alert-ok svg{color:#00c9a7}
+.alert-ok span{color:var(--text)}
+.alert-err{background:rgba(226,75,74,.08);border:1px solid rgba(226,75,74,.22)}
+.alert-err svg{color:#ef8787}
+.alert-err span{color:var(--text)}
+.alert-info{background:rgba(59,139,235,.08);border:1px solid rgba(59,139,235,.22)}
+.alert-info svg{color:#7fb8f5}
+.alert-info span{color:var(--text)}
+
+/* ── Metric cards ── */
+.metrics-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.metric-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
+.mc-label{font-size:10px;font-family:var(--mono);color:var(--muted);letter-spacing:.04em}
+.mc-value{font-size:22px;font-weight:500;margin:5px 0 3px;font-family:var(--mono)}
+.mc-change{font-size:11px;display:flex;align-items:center;gap:3px}
+.mc-ok{color:var(--accent2)}
+.mc-warn{color:var(--accent3)}
+.mc-err{color:var(--danger)}
+
+/* ── Connection list ── */
+.conn-list{display:flex;flex-direction:column}
+.conn-item{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);gap:10px;cursor:pointer;transition:background .13s}
+.conn-item:last-child{border-bottom:none}
+.conn-item:hover{background:rgba(255,255,255,.02)}
+.conn-info{flex:1;min-width:0}
+.conn-name{font-size:13px;font-weight:500;color:var(--text)}
+.conn-meta{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+.conn-actions{display:flex;gap:6px}
+.icon-btn{width:28px;height:28px;border-radius:5px;background:transparent;border:1px solid var(--border2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .13s;color:var(--muted)}
+.icon-btn:hover{background:rgba(255,255,255,.05);color:var(--text)}
+.icon-btn svg{width:13px;height:13px}
+
+/* ── Backup list ── */
+.backup-item{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);gap:10px}
+.backup-item:last-child{border-bottom:none}
+.bi-icon{width:30px;height:30px;border-radius:6px;background:rgba(59,139,235,.1);border:1px solid rgba(59,139,235,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bi-icon svg{width:14px;height:14px;color:#7fb8f5}
+.bi-info{flex:1;min-width:0}
+.bi-name{font-size:12px;font-weight:500;font-family:var(--mono);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bi-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.bi-actions{display:flex;gap:5px}
+
+/* ── Table selector ── */
+.table-selector{max-height:260px;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);background:var(--surface2)}
+.ts-item{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.ts-item:last-child{border-bottom:none}
+.ts-item:hover{background:rgba(255,255,255,.03)}
+.ts-item input[type=checkbox]{accent-color:var(--accent);flex-shrink:0}
+.ts-name{font-size:12px;font-family:var(--mono);color:var(--text);flex:1}
+.ts-rows{font-size:10px;color:var(--muted);font-family:var(--mono)}
+.ts-size{font-size:10px;color:var(--muted);font-family:var(--mono)}
+
+/* ── Views ── */
+.view{display:none}
+.view.active{display:flex;flex-direction:column;gap:14px}
+
+/* ── Tooltip para conn test ── */
+.latency-badge{font-size:10px;font-family:var(--mono);color:var(--accent2)}
+
+/* ── Section divider ── */
+.section-div{font-size:11px;font-family:var(--mono);color:var(--muted);letter-spacing:.05em;padding:0 0 6px;border-bottom:1px solid var(--border);margin-bottom:4px}
+
+/* ── Empty state ── */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;gap:8px;color:var(--muted)}
+.empty svg{width:32px;height:32px;opacity:.25}
+.empty p{font-size:13px}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.18)}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-box">
+      <svg viewBox="0 0 16 16" fill="white">
+        <rect x="1" y="3" width="14" height="3" rx="1"/>
+        <rect x="1" y="8.5" width="14" height="3" rx="1" opacity=".6"/>
+        <rect x="4" y="1" width="2.5" height="14" rx="1" opacity=".35"/>
+      </svg>
+    </div>
+    <span class="logo-name">DBMaster</span><span class="logo-ver">Suite v1.0</span>
+  </div>
+  <div class="topbar-mid">
+    <div class="api-status">
+      <div class="status-dot" id="api-dot" style="background:var(--muted)"></div>
+      <span id="api-label" style="color:var(--muted)">Verificando API...</span>
+    </div>
+  </div>
+  <div style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="backup-count-top">0 backups</div>
+</div>
+
+<!-- LAYOUT -->
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">PRINCIPAL</div>
+    <div class="nav-item active" data-view="dashboard" onclick="goView('dashboard',this)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+      Dashboard
+    </div>
+    <div class="sidebar-section">CONEXÕES</div>
+    <div class="nav-item" data-view="connections" onclick="goView('connections',this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2.5"/><circle cx="11" cy="11" r="2.5"/><path d="M7.3 7.3l2-1.6M7.3 8.7l2 1.6"/></svg>
+      Servidores
+    </div>
+    <div class="sidebar-section">BACKUP</div>
+    <div class="nav-item" data-view="backup" onclick="goView('backup',this)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7V7h2v4zm0-5H7V4h2v2z"/></svg>
+      Novo backup
+    </div>
+    <div class="nav-item" data-view="backups-list" onclick="goView('backups-list',this)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 2a1 1 0 011-1h8a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V2zm2 1v10h6V3H5zm1 2h4v1H6V5zm0 2h4v1H6V7zm0 2h2v1H6V9z"/></svg>
+      Meus backups
+      <span class="nav-badge" id="nav-backup-count" style="display:none">0</span>
+    </div>
+    <div class="sidebar-section">RESTORE</div>
+    <div class="nav-item" data-view="restore" onclick="goView('restore',this)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 100 10A5 5 0 008 3zm0 1.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zm-.75 1v2.56l1.75 1.75-.75.75-2.25-2.25V5.5h1.25z"/></svg>
+      Restaurar
+    </div>
+    <div class="sidebar-footer">
+      <div class="sf-label" id="sf-storage">Backups: carregando...</div>
+      <div class="sf-bar"><div class="sf-fill" id="sf-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main" id="main-content">
+
+    <!-- ── VIEW: DASHBOARD ── -->
+    <div id="view-dashboard" class="view active">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-sub">DBMaster Suite · visão geral do ambiente</div>
+      </div>
+      <div class="metrics-row" id="dash-metrics">
+        <div class="metric-card"><div class="mc-label">CONEXÕES</div><div class="mc-value" id="dm-conns">0</div><div class="mc-change mc-ok">configuradas</div></div>
+        <div class="metric-card"><div class="mc-label">BACKUPS</div><div class="mc-value" id="dm-backups">0</div><div class="mc-change mc-ok">armazenados</div></div>
+        <div class="metric-card"><div class="mc-label">STORAGE</div><div class="mc-value" id="dm-storage">0 MB</div><div class="mc-change mc-warn">total usado</div></div>
+        <div class="metric-card"><div class="mc-label">API</div><div class="mc-value" id="dm-api" style="font-size:14px">—</div><div class="mc-change" id="dm-api-sub">verificando</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hdr">
+          <div class="panel-title">Conexões salvas</div>
+          <button class="btn btn-ghost" style="padding:5px 10px;font-size:11px" onclick="goView('connections',document.querySelector('[data-view=connections]'))">Gerenciar →</button>
+        </div>
+        <div id="dash-conns-list">
+          <div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/><path d="M12 8v4M12 16h.01"/></svg><p>Nenhuma conexão configurada</p></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hdr">
+          <div class="panel-title">Backups recentes</div>
+          <button class="btn btn-ghost" style="padding:5px 10px;font-size:11px" onclick="goView('backups-list',document.querySelector('[data-view=backups-list]'))">Ver todos →</button>
+        </div>
+        <div id="dash-backups-list">
+          <div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg><p>Nenhum backup realizado ainda</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VIEW: CONEXÕES ── -->
+    <div id="view-connections" class="view">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div>
+          <div class="page-title">Servidores</div>
+          <div class="page-sub">Gerencie as conexões com seus bancos de dados</div>
+        </div>
+        <button class="btn btn-primary" onclick="openNewConn()">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1v14M1 8h14"/></svg>
+          Nova conexão
+        </button>
+      </div>
+
+      <!-- Form nova conexão -->
+      <div class="panel" id="conn-form-panel" style="display:none">
+        <div class="panel-hdr">
+          <div class="panel-title">Nova conexão</div>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="closeConnForm()">✕</button>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Nome da conexão</label>
+            <input id="cf-name" placeholder="ex: mysql-producao" value=""/>
+          </div>
+          <div class="field">
+            <label>Engine</label>
+            <select id="cf-engine" onchange="updateConnPort()">
+              <option value="mysql">MySQL / MariaDB</option>
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mssql">SQL Server</option>
+              <option value="mongodb">MongoDB</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Host</label>
+            <input id="cf-host" placeholder="localhost ou 192.168.1.10" value="127.0.0.1"/>
+          </div>
+          <div class="field">
+            <label>Porta</label>
+            <input id="cf-port" type="number" value="3306"/>
+          </div>
+          <div class="field">
+            <label>Usuário</label>
+            <input id="cf-user" placeholder="root" value="root"/>
+          </div>
+          <div class="field">
+            <label>Senha</label>
+            <input id="cf-pass" type="password" placeholder="senha"/>
+          </div>
+          <div class="field">
+            <label>Banco padrão (opcional)</label>
+            <input id="cf-db" placeholder="nome do banco"/>
+          </div>
+        </div>
+        <div class="btn-row" style="gap:8px">
+          <button class="btn btn-ghost" onclick="testConn()" id="btn-test-conn">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6 8l1.5 1.5L11 6"/></svg>
+            Testar conexão
+          </button>
+          <button class="btn btn-primary" onclick="saveConn()">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h9l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm6 0v4H5V2h3zm2 9H6v-1h4v1zm0-2H6V9h4v1z"/></svg>
+            Salvar
+          </button>
+          <div id="conn-test-result" style="margin-left:auto;font-size:12px;color:var(--muted)"></div>
+        </div>
+      </div>
+
+      <!-- Lista de conexões -->
+      <div class="panel">
+        <div class="conn-list" id="conn-list">
+          <div class="empty" id="conn-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><path d="M19 8v6M22 11h-6"/></svg>
+            <p>Nenhuma conexão salva. Clique em "Nova conexão" para começar.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VIEW: BACKUP ── -->
+    <div id="view-backup" class="view">
+      <div>
+        <div class="page-title">Novo Backup</div>
+        <div class="page-sub">Configure e execute um backup agora</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hdr"><div class="panel-title">Configuração</div></div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Conexão</label>
+            <select id="bk-conn" onchange="onBackupConnChange()">
+              <option value="">— Selecione uma conexão —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Banco de dados</label>
+            <select id="bk-db" onchange="loadBackupTables()" disabled>
+              <option value="">— Selecione o banco —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Nome do backup (opcional)</label>
+            <input id="bk-name" placeholder="ex: laudolab_fullbackup"/>
+          </div>
+          <div class="field">
+            <label>Tipo</label>
+            <select id="bk-type" onchange="toggleTableSel()">
+              <option value="full">Full (banco inteiro)</option>
+              <option value="tables">Tabelas específicas</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Seletor de tabelas -->
+        <div id="table-sel-wrap" style="display:none;padding:0 16px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+            <span style="font-size:11px;font-family:var(--mono);color:var(--muted)">SELECIONAR TABELAS</span>
+            <div style="display:flex;gap:8px">
+              <span style="font-size:11px;color:var(--accent);cursor:pointer" onclick="selAllTables(true)">Selecionar tudo</span>
+              <span style="font-size:11px;color:var(--muted)">·</span>
+              <span style="font-size:11px;color:var(--muted);cursor:pointer" onclick="selAllTables(false)">Limpar</span>
+            </div>
+          </div>
+          <div class="table-selector" id="table-selector">
+            <div class="empty" style="padding:20px"><p>Selecione um banco de dados primeiro</p></div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-run-backup" onclick="runBackup()" disabled>
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7V7h2v4zm0-5H7V4h2v2z"/></svg>
+            Executar backup
+          </button>
+        </div>
+      </div>
+
+      <!-- Log de execução -->
+      <div class="panel" id="backup-log-panel" style="display:none">
+        <div class="panel-hdr">
+          <div class="panel-title">Log de execução</div>
+          <span class="tag tag-run" id="backup-running-tag">rodando</span>
+        </div>
+        <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+          <div class="prog-wrap" style="padding:0">
+            <div class="prog-item">
+              <div class="prog-row"><span class="prog-label" id="prog-label">Preparando...</span><span class="prog-pct" id="prog-pct">0%</span></div>
+              <div class="prog-track"><div class="prog-fill" id="prog-fill" style="width:0%;background:var(--accent)"></div></div>
+            </div>
+          </div>
+          <div class="terminal" id="backup-terminal"></div>
+          <div id="backup-result"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VIEW: LISTA BACKUPS ── -->
+    <div id="view-backups-list" class="view">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div>
+          <div class="page-title">Meus Backups</div>
+          <div class="page-sub">Todos os arquivos de backup armazenados</div>
+        </div>
+        <button class="btn btn-ghost" onclick="loadBackupsList()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 8A5.5 5.5 0 112.5 8"/><path d="M13.5 4v4h-4"/></svg>
+          Atualizar
+        </button>
+      </div>
+      <div class="panel">
+        <div id="backups-list-content">
+          <div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/></svg><p>Nenhum backup encontrado</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VIEW: RESTORE ── -->
+    <div id="view-restore" class="view">
+      <div>
+        <div class="page-title">Restaurar Backup</div>
+        <div class="page-sub">Restaure um backup completo ou tabelas específicas</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hdr"><div class="panel-title">Configuração de restore</div></div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Arquivo de backup</label>
+            <select id="rs-file" onchange="onRestoreFileChange()">
+              <option value="">— Selecione um backup —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Conexão de destino</label>
+            <select id="rs-conn" onchange="onRestoreConnChange()">
+              <option value="">— Selecione uma conexão —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Banco de destino</label>
+            <input id="rs-db" placeholder="nome do banco (será criado se não existir)"/>
+          </div>
+          <div class="field">
+            <label>Modo</label>
+            <select id="rs-type" onchange="toggleRestoreTableSel()">
+              <option value="full">Restore completo</option>
+              <option value="tables">Tabelas específicas</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Tabelas do backup -->
+        <div id="restore-table-sel-wrap" style="display:none;padding:0 16px 14px">
+          <div style="margin-bottom:7px;font-size:11px;font-family:var(--mono);color:var(--muted)">TABELAS NO BACKUP</div>
+          <div class="table-selector" id="restore-table-selector">
+            <div class="empty" style="padding:20px"><p>Selecione um arquivo de backup primeiro</p></div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin:0 16px 14px;background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)">
+          <div style="padding:10px 14px;font-size:12px;color:#fbbf24;display:flex;align-items:center;gap:8px">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0 15h16L8 1zm0 3l5.5 10h-11L8 4zm-1 4v3h2V8H7zm0 4v2h2v-2H7z"/></svg>
+            <span>O restore <strong>sobrescreve</strong> os dados existentes no banco de destino. Esta ação não pode ser desfeita.</span>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success" id="btn-run-restore" onclick="runRestore()" disabled>
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 100 10A5 5 0 008 3zm0 1.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zm-.75 1v2.56l1.75 1.75-.75.75-2.25-2.25V5.5h1.25z"/></svg>
+            Executar restore
+          </button>
+        </div>
+      </div>
+
+      <!-- Log restore -->
+      <div class="panel" id="restore-log-panel" style="display:none">
+        <div class="panel-hdr">
+          <div class="panel-title">Log de restore</div>
+          <span class="tag tag-run" id="restore-running-tag">rodando</span>
+        </div>
+        <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+          <div class="terminal" id="restore-terminal"></div>
+          <div id="restore-result"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+</div><!-- /app -->
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const API = 'http://localhost:8000';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let connections = JSON.parse(localStorage.getItem('dbmaster_conns') || '[]');
+let currentTables = [];
+let backupFiles = [];
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function goView(name, el) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'dashboard') refreshDashboard();
+  if (name === 'backups-list') loadBackupsList();
+  if (name === 'backup') populateConnSelect('bk-conn');
+  if (name === 'restore') { populateConnSelect('rs-conn'); loadRestoreFiles(); }
+}
+
+// ── API Health ─────────────────────────────────────────────────────────────────
+async function checkAPI() {
+  const dot = document.getElementById('api-dot');
+  const label = document.getElementById('api-label');
+  dot.className = 'status-dot dot-spin';
+  label.textContent = 'Conectando...';
+  label.style.color = 'var(--muted)';
+  try {
+    const r = await fetchWithTimeout(API + '/api/backups', {}, 4000);
+    if (r.ok) {
+      dot.className = 'status-dot dot-ok';
+      label.textContent = 'API online · localhost:8000';
+      label.style.color = 'var(--accent2)';
+      document.getElementById('dm-api').textContent = 'Online';
+      document.getElementById('dm-api-sub').textContent = 'localhost:8000';
+      document.getElementById('dm-api-sub').className = 'mc-change mc-ok';
+      const data = await r.json();
+      backupFiles = data.backups;
+      updateBackupCount();
+    }
+  } catch (e) {
+    dot.className = 'status-dot dot-err';
+    label.textContent = 'API offline — execute server.py';
+    label.style.color = 'var(--danger)';
+    document.getElementById('dm-api').textContent = 'Offline';
+    document.getElementById('dm-api-sub').textContent = 'server.py não rodando';
+    document.getElementById('dm-api-sub').className = 'mc-change mc-err';
+  }
+}
+
+// ── Connections ───────────────────────────────────────────────────────────────
+function saveConns() {
+  localStorage.setItem('dbmaster_conns', JSON.stringify(connections));
+}
+
+function getEngineShort(engine) {
+  return { mysql: 'MY', postgresql: 'PG', mssql: 'MS', mongodb: 'MG' }[engine] || '??';
+}
+function getEngineClass(engine) {
+  return 'eng eng-' + engine;
+}
+function getEngineLabel(engine) {
+  return { mysql: 'MySQL', postgresql: 'PostgreSQL', mssql: 'SQL Server', mongodb: 'MongoDB' }[engine] || engine;
+}
+
+function renderConnList() {
+  const list = document.getElementById('conn-list');
+  const empty = document.getElementById('conn-empty');
+  if (connections.length === 0) {
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+  // remove existing items
+  list.querySelectorAll('.conn-item').forEach(e => e.remove());
+  connections.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'conn-item';
+    div.innerHTML = `
+      <div class="${getEngineClass(c.engine)}">${getEngineShort(c.engine)}</div>
+      <div class="conn-info">
+        <div class="conn-name">${c.name}</div>
+        <div class="conn-meta">${getEngineLabel(c.engine)} · ${c.host}:${c.port} · ${c.user}</div>
+      </div>
+      <div class="conn-actions">
+        <button class="icon-btn" title="Testar" onclick="testSavedConn(${i})">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6 8l1.5 1.5L11 6"/></svg>
+        </button>
+        <button class="icon-btn" title="Backup rápido" onclick="quickBackup(${i})">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7V7h2v4zm0-5H7V4h2v2z"/></svg>
+        </button>
+        <button class="icon-btn btn-danger" title="Remover" onclick="removeConn(${i})">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2h4v2M5 4v9h6V4"/></svg>
+        </button>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function openNewConn() {
+  document.getElementById('conn-form-panel').style.display = 'block';
+  document.getElementById('cf-name').focus();
+}
+function closeConnForm() {
+  document.getElementById('conn-form-panel').style.display = 'none';
+  document.getElementById('conn-test-result').textContent = '';
+}
+
+function updateConnPort() {
+  const ports = { mysql: 3306, postgresql: 5432, mssql: 1433, mongodb: 27017 };
+  document.getElementById('cf-port').value = ports[document.getElementById('cf-engine').value] || 3306;
+}
+
+async function testConn() {
+  const btn = document.getElementById('btn-test-conn');
+  const result = document.getElementById('conn-test-result');
+  btn.disabled = true;
+  result.textContent = 'Testando...';
+  result.style.color = 'var(--muted)';
+  const cfg = getConnFormData();
+  try {
+    const r = await fetchWithTimeout(API + '/api/test-connection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg)
+    }, 8000);
+    const data = await r.json();
+    if (r.ok) {
+      result.innerHTML = `<span style="color:var(--accent2)">✓ Conectado · ${data.version} · ${data.latency_ms}ms · ${data.databases.length} bancos</span>`;
+    } else {
+      result.innerHTML = `<span style="color:var(--danger)">✗ ${data.detail}</span>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--danger)">✗ Erro: ${e.message}</span>`;
+  }
+  btn.disabled = false;
+}
+
+function getConnFormData() {
+  return {
+    engine: document.getElementById('cf-engine').value,
+    host: document.getElementById('cf-host').value,
+    port: parseInt(document.getElementById('cf-port').value),
+    user: document.getElementById('cf-user').value,
+    password: document.getElementById('cf-pass').value,
+    database: document.getElementById('cf-db').value || null
+  };
+}
+
+function saveConn() {
+  const name = document.getElementById('cf-name').value.trim();
+  if (!name) { alert('Informe um nome para a conexão'); return; }
+  const cfg = getConnFormData();
+  connections.push({ name, ...cfg });
+  saveConns();
+  renderConnList();
+  closeConnForm();
+  populateConnSelect('bk-conn');
+  populateConnSelect('rs-conn');
+  updateDashMetrics();
+}
+
+function removeConn(i) {
+  if (!confirm(`Remover conexão "${connections[i].name}"?`)) return;
+  connections.splice(i, 1);
+  saveConns();
+  renderConnList();
+  populateConnSelect('bk-conn');
+  populateConnSelect('rs-conn');
+  updateDashMetrics();
+}
+
+async function testSavedConn(i) {
+  const c = connections[i];
+  try {
+    const r = await fetchWithTimeout(API + '/api/test-connection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c)
+    }, 8000);
+    const data = await r.json();
+    if (r.ok) alert(`✓ Conectado!\n${data.version}\nLatência: ${data.latency_ms}ms\nBancos: ${data.databases.join(', ')}`);
+    else alert(`✗ Erro: ${data.detail}`);
+  } catch (e) {
+    alert(`✗ Falha: ${e.message}`);
+  }
+}
+
+function quickBackup(i) {
+  connections.forEach((_, idx) => {});
+  // popula o form de backup com esta conexão
+  goView('backup', document.querySelector('[data-view=backup]'));
+  setTimeout(() => {
+    const sel = document.getElementById('bk-conn');
+    sel.value = i;
+    onBackupConnChange();
+  }, 100);
+}
+
+// ── Backup ────────────────────────────────────────────────────────────────────
+function populateConnSelect(selId) {
+  const sel = document.getElementById(selId);
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Selecione uma conexão —</option>';
+  connections.forEach((c, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${c.name} (${getEngineLabel(c.engine)})`;
+    sel.appendChild(opt);
+  });
+  if (prev !== '') sel.value = prev;
+}
+
+async function onBackupConnChange() {
+  const idx = document.getElementById('bk-conn').value;
+  const dbSel = document.getElementById('bk-db');
+  const runBtn = document.getElementById('btn-run-backup');
+  dbSel.innerHTML = '<option>Carregando...</option>';
+  dbSel.disabled = true;
+  runBtn.disabled = true;
+  if (idx === '') { dbSel.innerHTML = '<option>— Selecione —</option>'; return; }
+  const c = connections[idx];
+  try {
+    const r = await fetchWithTimeout(API + '/api/test-connection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c)
+    }, 8000);
+    const data = await r.json();
+    dbSel.innerHTML = '<option value="">— Selecione o banco —</option>';
+    if (r.ok) {
+      data.databases.forEach(db => {
+        if (['information_schema','performance_schema','sys','mysql'].includes(db)) return;
+        const opt = document.createElement('option');
+        opt.value = db; opt.textContent = db;
+        dbSel.appendChild(opt);
+      });
+      dbSel.disabled = false;
+    } else {
+      dbSel.innerHTML = `<option>Erro: ${data.detail}</option>`;
+    }
+  } catch (e) {
+    dbSel.innerHTML = `<option>Falha: ${e.message}</option>`;
+  }
+}
+
+async function loadBackupTables() {
+  const db = document.getElementById('bk-db').value;
+  const idx = document.getElementById('bk-conn').value;
+  const runBtn = document.getElementById('btn-run-backup');
+  if (!db) { runBtn.disabled = true; return; }
+  runBtn.disabled = false;
+  const c = connections[idx];
+  try {
+    const r = await fetchWithTimeout(API + '/api/list-tables', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...c, database: db })
+    }, 10000);
+    const data = await r.json();
+    if (r.ok) {
+      currentTables = data.tables;
+      renderTableSelector('table-selector', currentTables, true);
+    }
+  } catch (e) {}
+  toggleTableSel();
+}
+
+function toggleTableSel() {
+  const type = document.getElementById('bk-type').value;
+  document.getElementById('table-sel-wrap').style.display = type === 'tables' ? 'block' : 'none';
+}
+
+function renderTableSelector(containerId, tables, allChecked) {
+  const el = document.getElementById(containerId);
+  if (!tables.length) { el.innerHTML = '<div class="empty" style="padding:20px"><p>Nenhuma tabela encontrada</p></div>'; return; }
+  el.innerHTML = '';
+  tables.forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'ts-item';
+    div.innerHTML = `
+      <input type="checkbox" name="tbl" value="${t.name}" ${allChecked ? 'checked' : ''}>
+      <span class="ts-name">${t.name}</span>
+      <span class="ts-rows">${t.rows.toLocaleString()} rows</span>
+      <span class="ts-size" style="margin-left:8px">${t.size_mb} MB</span>
+    `;
+    div.querySelector('input').addEventListener('change', () => {});
+    el.appendChild(div);
+  });
+}
+
+function selAllTables(v) {
+  document.querySelectorAll('#table-selector input[type=checkbox]').forEach(cb => cb.checked = v);
+}
+
+function getSelectedTables(containerId) {
+  return [...document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)].map(cb => cb.value);
+}
+
+function termLog(termId, cls, msg) {
+  const term = document.getElementById(termId);
+  const ts = new Date().toTimeString().slice(0, 8);
+  const div = document.createElement('div');
+  div.innerHTML = `<span class="t-ts">${ts}</span><span class="${cls}">${msg}</span>`;
+  term.appendChild(div);
+  term.scrollTop = term.scrollHeight;
+}
+
+async function runBackup() {
+  const idx = document.getElementById('bk-conn').value;
+  const db = document.getElementById('bk-db').value;
+  const type = document.getElementById('bk-type').value;
+  const name = document.getElementById('bk-name').value.trim();
+  if (!idx || !db) { alert('Selecione conexão e banco de dados'); return; }
+
+  const c = connections[idx];
+  const tables = type === 'tables' ? getSelectedTables('table-selector') : null;
+  if (type === 'tables' && (!tables || tables.length === 0)) {
+    alert('Selecione ao menos uma tabela'); return;
+  }
+
+  // Show log panel
+  document.getElementById('backup-log-panel').style.display = 'block';
+  document.getElementById('backup-result').innerHTML = '';
+  document.getElementById('backup-terminal').innerHTML = '';
+  document.getElementById('btn-run-backup').disabled = true;
+  setProgress('prog-fill', 'prog-pct', 'prog-label', 5, 'Iniciando backup...');
+
+  const payload = {
+    connection: { ...c, database: db },
+    database: db,
+    tables: tables,
+    output_name: name || null
+  };
+
+  termLog('backup-terminal', 't-info', `[backup] Conectando em ${c.host}:${c.port}...`);
+  setProgress('prog-fill', 'prog-pct', 'prog-label', 20, 'Conectando ao banco...');
+
+  try {
+    await delay(400);
+    termLog('backup-terminal', 't-ok', `[ok] Conexão estabelecida — ${getEngineLabel(c.engine)}`);
+    setProgress('prog-fill', 'prog-pct', 'prog-label', 40, 'Exportando dados...');
+    termLog('backup-terminal', 't-info', `[backup] Exportando ${tables ? tables.join(', ') : 'banco completo'}...`);
+    await delay(300);
+
+    const r = await fetch(API + '/api/backup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+
+    setProgress('prog-fill', 'prog-pct', 'prog-label', 80, 'Salvando arquivo...');
+    await delay(300);
+
+    if (r.ok) {
+      termLog('backup-terminal', 't-ok', `[ok] Exportação concluída — ${data.tables.join(', ')}`);
+      setProgress('prog-fill', 'prog-pct', 'prog-label', 100, 'Concluído!');
+      document.getElementById('backup-running-tag').textContent = 'concluído';
+      document.getElementById('backup-running-tag').className = 'tag tag-ok';
+      termLog('backup-terminal', 't-ok', `[done] Arquivo: ${data.file} · ${data.size_mb} MB`);
+      document.getElementById('backup-result').innerHTML = `
+        <div class="alert alert-ok">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 5"/></svg>
+          <span><strong>Backup concluído!</strong> Arquivo: <code style="font-family:var(--mono)">${data.file}</code> · ${data.size_mb} MB · ${data.tables.length} tabela(s)</span>
+        </div>`;
+      backupFiles.unshift({ file: data.file, size_bytes: data.size_bytes, size_mb: data.size_mb, created: new Date().toISOString() });
+      updateBackupCount();
+    } else {
+      throw new Error(data.detail || 'Erro desconhecido');
+    }
+  } catch (e) {
+    termLog('backup-terminal', 't-err', `[erro] ${e.message}`);
+    setProgress('prog-fill', 'prog-pct', 'prog-label', 0, 'Falhou');
+    document.getElementById('backup-running-tag').textContent = 'falhou';
+    document.getElementById('backup-running-tag').className = 'tag tag-err';
+    document.getElementById('backup-result').innerHTML = `
+      <div class="alert alert-err">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0 15h16L8 1zm0 3l5.5 10h-11L8 4zm-1 4v3h2V8H7zm0 4v2h2v-2H7z"/></svg>
+        <span>${e.message}</span>
+      </div>`;
+  }
+  document.getElementById('btn-run-backup').disabled = false;
+}
+
+// ── Backup List ───────────────────────────────────────────────────────────────
+async function loadBackupsList() {
+  const content = document.getElementById('backups-list-content');
+  if (!content) return console.warn('backups-list-content not found');
+  content.innerHTML = '<div class="empty"><p>Carregando...</p></div>';
+  try {
+    const r = await fetch(API + '/api/backups');
+    const data = await r.json();
+    backupFiles = data.backups;
+    renderBackupsList(content, backupFiles);
+    updateBackupCount();
+  } catch (e) {
+    console.error('loadBackupsList error:', e);
+    if (content) content.innerHTML = `<div class="alert alert-err" style="margin:12px"><span>Erro ao carregar: ${e.message}</span></div>`;
+  }
+}
+
+function renderBackupsList(container, files) {
+  if (!container) return console.warn('renderBackupsList: container null');
+  if (!files.length) {
+    container.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/></svg><p>Nenhum backup encontrado</p></div>';
+    return;
+  }
+  container.innerHTML = '';
+  files.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'backup-item';
+    const ext = f.file.endsWith('.json') ? 'JSON' : 'SQL';
+    const date = new Date(f.created).toLocaleString('pt-BR');
+    div.innerHTML = `
+      <div class="bi-icon">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1zm6 0v3h3"/></svg>
+      </div>
+      <div class="bi-info">
+        <div class="bi-name">${f.file}</div>
+        <div class="bi-meta">${f.size_mb} MB · ${date} · <span class="tag tag-info" style="font-size:9px">${ext}</span></div>
+      </div>
+      <div class="bi-actions">
+        <a href="${API}/api/backups/${f.file}/download" download>
+          <button class="icon-btn" title="Download">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v7M5 8l3 3 3-3M3 13h10"/></svg>
+          </button>
+        </a>
+        <button class="icon-btn" title="Restaurar este backup" onclick="useForRestore('${f.file}')">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 100 10A5 5 0 008 3zm0 1.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zm-.75 1v2.56l1.75 1.75-.75.75-2.25-2.25V5.5h1.25z"/></svg>
+        </button>
+        <button class="icon-btn btn-danger" title="Deletar" onclick="deleteBackup('${f.file}', this)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2h4v2M5 4v9h6V4"/></svg>
+        </button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function deleteBackup(filename, btn) {
+  if (!confirm(`Deletar "${filename}"? Esta ação é irreversível.`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/backups/${filename}`, { method: 'DELETE' });
+    if (r.ok) {
+      backupFiles = backupFiles.filter(f => f.file !== filename);
+      await loadBackupsList();
+      updateBackupCount();
+    } else {
+      alert('Erro ao deletar');
+    }
+  } catch (e) {
+    console.error('deleteBackup error:', e);
+    alert('Falha: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function useForRestore(filename) {
+  goView('restore', document.querySelector('[data-view=restore]'));
+  setTimeout(() => {
+    document.getElementById('rs-file').value = filename;
+    onRestoreFileChange();
+  }, 200);
+}
+
+// ── Restore ───────────────────────────────────────────────────────────────────
+async function loadRestoreFiles() {
+  const sel = document.getElementById('rs-file');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Selecione um backup —</option>';
+  try {
+    const r = await fetch(API + '/api/backups');
+    const data = await r.json();
+    backupFiles = data.backups;
+    data.backups.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.file;
+      opt.textContent = `${f.file} (${f.size_mb} MB)`;
+      sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+  } catch (e) {}
+}
+
+function onRestoreFileChange() {
+  const file = document.getElementById('rs-file').value;
+  const runBtn = document.getElementById('btn-run-restore');
+  const db = document.getElementById('rs-db');
+  if (file) {
+    const base = file.replace(/\.[^.]+$/, '').replace(/_\d{8}_\d{6}$/, '');
+    db.placeholder = base;
+    runBtn.disabled = !document.getElementById('rs-conn').value;
+    // parse table names from filename hint (not feasible without reading file)
+    // just enable the selector
+    document.getElementById('restore-table-selector').innerHTML = '<div class="empty" style="padding:16px"><p style="font-size:11px">As tabelas serão exibidas durante o restore</p></div>';
+  } else {
+    runBtn.disabled = true;
+  }
+  toggleRestoreTableSel();
+}
+
+function onRestoreConnChange() {
+  const file = document.getElementById('rs-file').value;
+  document.getElementById('btn-run-restore').disabled = !file || !document.getElementById('rs-conn').value;
+}
+
+function toggleRestoreTableSel() {
+  const type = document.getElementById('rs-type').value;
+  document.getElementById('restore-table-sel-wrap').style.display = type === 'tables' ? 'block' : 'none';
+}
+
+async function runRestore() {
+  const idx = document.getElementById('rs-conn').value;
+  const file = document.getElementById('rs-file').value;
+  const db = document.getElementById('rs-db').value.trim();
+  if (!idx || !file) { alert('Selecione conexão e arquivo de backup'); return; }
+  if (!db) { alert('Informe o banco de destino'); return; }
+  if (!confirm(`Restaurar "${file}" em "${db}"?\n\nATENÇÃO: Os dados existentes serão sobrescritos!`)) return;
+
+  const c = connections[idx];
+  document.getElementById('restore-log-panel').style.display = 'block';
+  document.getElementById('restore-terminal').innerHTML = '';
+  document.getElementById('restore-result').innerHTML = '';
+  document.getElementById('btn-run-restore').disabled = true;
+
+  const payload = {
+    connection: { ...c, database: db },
+    database: db,
+    backup_file: file,
+    tables: null
+  };
+
+  termLog('restore-terminal', 't-info', `[restore] Conectando em ${c.host}:${c.port}...`);
+  await delay(300);
+  termLog('restore-terminal', 't-ok', `[ok] Conexão: ${getEngineLabel(c.engine)}`);
+  termLog('restore-terminal', 't-info', `[restore] Lendo ${file}...`);
+  await delay(400);
+
+  try {
+    const r = await fetch(API + '/api/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+
+    if (r.ok) {
+      termLog('restore-terminal', 't-ok', `[ok] ${data.statements_executed} instruções executadas`);
+      if (data.errors && data.errors.length) {
+        data.errors.forEach(e => termLog('restore-terminal', 't-warn', `[warn] ${e}`));
+      }
+      termLog('restore-terminal', 't-ok', `[done] Banco "${db}" restaurado com sucesso`);
+      document.getElementById('restore-running-tag').textContent = 'concluído';
+      document.getElementById('restore-running-tag').className = 'tag tag-ok';
+      document.getElementById('restore-result').innerHTML = `
+        <div class="alert alert-ok">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 5"/></svg>
+          <span><strong>Restore concluído!</strong> Banco <code style="font-family:var(--mono)">${db}</code> · ${data.statements_executed} instruções · ${data.errors.length} avisos</span>
+        </div>`;
+    } else {
+      throw new Error(data.detail || 'Erro no restore');
+    }
+  } catch (e) {
+    termLog('restore-terminal', 't-err', `[erro] ${e.message}`);
+    document.getElementById('restore-running-tag').textContent = 'falhou';
+    document.getElementById('restore-running-tag').className = 'tag tag-err';
+    document.getElementById('restore-result').innerHTML = `
+      <div class="alert alert-err">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0 15h16L8 1zm0 3l5.5 10h-11L8 4zm-1 4v3h2V8H7zm0 4v2h2v-2H7z"/></svg>
+        <span>${e.message}</span>
+      </div>`;
+  }
+  document.getElementById('btn-run-restore').disabled = false;
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function updateDashMetrics() {
+  document.getElementById('dm-conns').textContent = connections.length;
+  document.getElementById('dm-backups').textContent = backupFiles.length;
+  const totalMB = backupFiles.reduce((s, f) => s + f.size_mb, 0);
+  document.getElementById('dm-storage').textContent = totalMB < 1024 ? totalMB.toFixed(1) + ' MB' : (totalMB / 1024).toFixed(2) + ' GB';
+}
+
+function renderDashConns() {
+  const el = document.getElementById('dash-conns-list');
+  if (!el) return;
+  if (!connections.length) {
+    el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/></svg><p>Nenhuma conexão configurada</p></div>';
+    return;
+  }
+  el.innerHTML = '';
+  connections.slice(0, 5).forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'conn-item';
+    div.style.cursor = 'default';
+    div.innerHTML = `
+      <div class="${getEngineClass(c.engine)}">${getEngineShort(c.engine)}</div>
+      <div class="conn-info">
+        <div class="conn-name">${c.name}</div>
+        <div class="conn-meta">${getEngineLabel(c.engine)} · ${c.host}:${c.port}</div>
+      </div>
+      <button class="btn btn-ghost" style="padding:5px 10px;font-size:11px" onclick="testSavedConn(${i})">Testar</button>
+    `;
+    el.appendChild(div);
+  });
+}
+
+function renderDashBackups() {
+  const el = document.getElementById('dash-backups-list');
+  if (!el) return;
+  const files = backupFiles.slice(0, 5);
+  if (!files.length) {
+    el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/></svg><p>Nenhum backup realizado ainda</p></div>';
+    return;
+  }
+  el.innerHTML = '';
+  renderBackupsList(el, files);
+}
+
+function refreshDashboard() {
+  updateDashMetrics();
+  renderDashConns();
+  renderDashBackups();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fetchWithTimeout(url, options = {}, timeout = 8000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeout);
+  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+function safeEl(id) {
+  const el = document.getElementById(id);
+  if (!el) console.warn('Element #' + id + ' not found');
+  return el;
+}
+
+function setProgress(fillId, pctId, labelId, pct, label) {
+  document.getElementById(fillId).style.width = pct + '%';
+  document.getElementById(pctId).textContent = pct + '%';
+  document.getElementById(labelId).textContent = label;
+}
+
+function updateBackupCount() {
+  const n = backupFiles.length;
+  document.getElementById('backup-count-top').textContent = n + ' backup' + (n !== 1 ? 's' : '');
+  const badge = document.getElementById('nav-backup-count');
+  if (n > 0) { badge.textContent = n; badge.style.display = 'flex'; } else { badge.style.display = 'none'; }
+  document.getElementById('dm-backups').textContent = n;
+  const totalMB = backupFiles.reduce((s, f) => s + f.size_mb, 0);
+  document.getElementById('dm-storage').textContent = totalMB < 1 ? Math.round(totalMB * 1024) + ' KB' : totalMB.toFixed(1) + ' MB';
+  document.getElementById('sf-label').textContent = `Backups: ${totalMB.toFixed(1)} MB`;
+  document.getElementById('sf-fill').style.width = Math.min(100, (totalMB / 1024) * 100) + '%';
+}
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  renderConnList();
+  updateDashMetrics();
+  checkAPI();
+  setInterval(checkAPI, 15000);
+});
+</script>
+</body>
+</html>
