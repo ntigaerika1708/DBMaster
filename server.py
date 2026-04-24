@@ -252,17 +252,19 @@ def run_backup(cfg: BackupConfig):
     try:
         if conn_cfg.engine == "mysql":
             outfile = os.path.join(BACKUP_DIR, f"{name}.sql")
-            tables_arg = " ".join(cfg.tables) if cfg.tables else ""
-            cmd = [
-                "mysqldump",
-                f"-h{conn_cfg.host}", f"-P{conn_cfg.port}",
-                f"-u{conn_cfg.user}", f"-p{conn_cfg.password}",
-                "--single-transaction", "--routines", "--triggers",
-                cfg.database
-            ]
-            if cfg.tables:
-                cmd.extend(cfg.tables)
+            cnf_path = None
             try:
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.cnf', delete=False) as cnf:
+                    cnf.write(f"[mysqldump]\nhost={conn_cfg.host}\nport={conn_cfg.port}\nuser={conn_cfg.user}\npassword={conn_cfg.password}\n")
+                    cnf_path = cnf.name
+                cmd = [
+                    "mysqldump",
+                    f"--defaults-extra-file={cnf_path}",
+                    "--single-transaction", "--routines", "--triggers",
+                    cfg.database
+                ]
+                if cfg.tables:
+                    cmd.extend(cfg.tables)
                 with open(outfile, "w") as f:
                     result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, timeout=300)
                 if result.returncode != 0:
@@ -270,6 +272,9 @@ def run_backup(cfg: BackupConfig):
                     raise HTTPException(400, err)
             except FileNotFoundError:
                 return _mysql_backup_python(conn_cfg, cfg.database, cfg.tables, outfile, name)
+            finally:
+                if cnf_path and os.path.exists(cnf_path):
+                    os.unlink(cnf_path)
 
         elif conn_cfg.engine == "postgresql":
             outfile = os.path.join(BACKUP_DIR, f"{name}.sql")
@@ -606,6 +611,8 @@ def list_backups():
     """Lista todos os backups disponíveis."""
     files = []
     for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
+        if f.startswith('.'):
+            continue
         path = os.path.join(BACKUP_DIR, f)
         if os.path.isfile(path):
             stat = os.stat(path)
@@ -641,5 +648,4 @@ if __name__ == "__main__":
     print("  DBMaster Suite - Backend API")
     print("  http://localhost:8000")
     print("=" * 60)
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

@@ -1138,7 +1138,7 @@ function updateDashMetrics() {
   document.getElementById('dm-conns').textContent = connections.length;
   document.getElementById('dm-backups').textContent = backupFiles.length;
   const totalMB = backupFiles.reduce((s, f) => s + f.size_mb, 0);
-  document.getElementById('dm-storage').textContent = totalMB < 1024 ? totalMB.toFixed(1) + ' MB' : (totalMB / 1024).toFixed(2) + ' GB';
+  document.getElementById('dm-storage').textContent = formatSize(totalMB);
 }
 
 function renderDashConns() {
@@ -1209,11 +1209,16 @@ function updateBackupCount() {
   if (n > 0) { badge.textContent = n; badge.style.display = 'flex'; } else { badge.style.display = 'none'; }
   document.getElementById('dm-backups').textContent = n;
   const totalMB = backupFiles.reduce((s, f) => s + f.size_mb, 0);
-  document.getElementById('dm-storage').textContent = totalMB < 1 ? Math.round(totalMB * 1024) + ' KB' : totalMB.toFixed(1) + ' MB';
-  document.getElementById('sf-label').textContent = `Backups: ${totalMB.toFixed(1)} MB`;
+  document.getElementById('dm-storage').textContent = formatSize(totalMB);
+  document.getElementById('sf-storage').textContent = `Backups: ${formatSize(totalMB)}`;
   document.getElementById('sf-fill').style.width = Math.min(100, (totalMB / 1024) * 100) + '%';
 }
 
+function formatSize(mb) {
+  if (mb < 1) return Math.round(mb * 1024) + ' KB';
+  if (mb < 1024) return mb.toFixed(1) + ' MB';
+  return (mb / 1024).toFixed(2) + ' GB';
+}
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 // ── Init ──────────────────────────────────────────────────────────────────────
