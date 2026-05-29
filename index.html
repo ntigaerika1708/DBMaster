@@ -825,6 +825,38 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
       </div>
     </div>
     <div class="panel">
+      <div class="panel-header"><div class="panel-title">Proxmox (sandbox LXC para validar restauros)</div></div>
+      <div class="form-grid g3" style="padding:14px 16px">
+        <div class="field"><label>Host Proxmox</label><input id="set-px-host" placeholder="proxmox.local"/></div>
+        <div class="field"><label>Nó (node)</label><input id="set-px-node" placeholder="pve"/></div>
+        <div class="field"><label>Token ID</label><input id="set-px-tokenid" placeholder="vaultdb@pve!sandbox"/></div>
+        <div class="field"><label>Token Secret</label><input id="set-px-tokensecret" type="password" autocomplete="off" placeholder="vazio = não alterar"/></div>
+        <div class="field"><label>Storage</label><input id="set-px-storage" placeholder="local-lvm"/></div>
+        <div class="field"><label>Bridge de rede</label><input id="set-px-bridge" placeholder="vmbr0"/></div>
+        <div class="field span2"><label>Template LXC</label><input id="set-px-template" placeholder="local:vztmpl/debian-12-standard_..._amd64.tar.zst"/></div>
+        <div class="field"><label>Verificar TLS</label>
+          <select id="set-px-tls"><option value="0">Não (self-signed)</option><option value="1">Sim</option></select>
+        </div>
+        <div class="field span3" style="padding-top:6px">
+          <button type="button" class="btn btn-primary" onclick="saveSettings()">Guardar configurações</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Tenants (multi-organização)</div>
+        <button type="button" class="btn btn-ghost" style="padding:4px 9px;font-size:11px" onclick="loadTenantsList()">Atualizar</button>
+      </div>
+      <div class="form-grid g3" style="padding:14px 16px;border-bottom:1px solid var(--border)">
+        <div class="field"><label>Nome do tenant</label><input id="set-new-tenant" placeholder="ex.: Cliente A"/></div>
+        <div class="field"><label>ID (opcional)</label><input id="set-new-tenant-id" placeholder="ex.: cliente-a"/></div>
+        <div class="field" style="justify-content:flex-end;padding-top:16px">
+          <button type="button" class="btn btn-primary" onclick="createTenant()">Criar tenant</button>
+        </div>
+      </div>
+      <div id="settings-tenants-list" style="padding:10px 16px 16px"></div>
+    </div>
+    <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Utilizadores</div>
         <button type="button" class="btn btn-ghost" style="padding:4px 9px;font-size:11px" onclick="loadUsersList()">Atualizar</button>
@@ -834,6 +866,9 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
         <div class="field"><label>Palavra-passe</label><input id="set-new-pass" type="password" placeholder="mín. 4 caracteres"/></div>
         <div class="field"><label>Função</label>
           <select id="set-new-role"><option value="viewer">Leitura (viewer)</option><option value="admin">Administrador</option></select>
+        </div>
+        <div class="field"><label>Tenant</label>
+          <select id="set-new-tenant-sel"><option value="*">Global (*)</option></select>
         </div>
         <div class="field" style="justify-content:flex-end;padding-top:16px">
           <button type="button" class="btn btn-primary" onclick="createUserFromSettings()">Criar utilizador</button>
@@ -1621,6 +1656,7 @@ async function loadSettingsPage() {
     return;
   }
   await loadSettingsForm();
+  await loadTenantsList();
   await loadUsersList();
 }
 
@@ -1637,6 +1673,15 @@ async function loadSettingsForm() {
     qid('set-tg-token').value = '';
     qid('set-tg-token').placeholder = d.telegram_token_configured ? '••• configurado (preencha para substituir)' : 'opcional';
     qid('set-tg-chat').value = d.telegram_chat_id || '';
+    qid('set-px-host').value = d.proxmox_host || '';
+    qid('set-px-node').value = d.proxmox_node || 'pve';
+    qid('set-px-tokenid').value = d.proxmox_token_id || '';
+    qid('set-px-tokensecret').value = '';
+    qid('set-px-tokensecret').placeholder = d.proxmox_token_secret_configured ? '••• configurado (preencha para substituir)' : 'opcional';
+    qid('set-px-storage').value = d.proxmox_storage || '';
+    qid('set-px-bridge').value = d.proxmox_bridge || 'vmbr0';
+    qid('set-px-template').value = d.proxmox_template || '';
+    qid('set-px-tls').value = d.proxmox_verify_tls ? '1' : '0';
   } catch (e) { alert('Falha ao carregar: ' + e.message); }
 }
 
@@ -1652,11 +1697,71 @@ async function saveSettings() {
     const tgt = qid('set-tg-token').value.trim();
     if (tgt) payload.telegram_token = tgt;
     payload.telegram_chat_id = qid('set-tg-chat').value.trim();
+    payload.proxmox_host = qid('set-px-host').value.trim();
+    payload.proxmox_node = qid('set-px-node').value.trim();
+    payload.proxmox_token_id = qid('set-px-tokenid').value.trim();
+    const pxs = qid('set-px-tokensecret').value;
+    if (pxs) payload.proxmox_token_secret = pxs;
+    payload.proxmox_storage = qid('set-px-storage').value.trim();
+    payload.proxmox_bridge = qid('set-px-bridge').value.trim();
+    payload.proxmox_template = qid('set-px-template').value.trim();
+    payload.proxmox_verify_tls = qid('set-px-tls').value === '1';
     const r = await apiFetch('/api/settings', { method: 'PUT', body: JSON.stringify(payload) });
     const d = await r.json();
     if (!r.ok) { alert('Erro: ' + (d.detail || JSON.stringify(d))); return; }
     alert('✓ Configurações guardadas.');
     await loadSettingsForm();
+  } catch (e) { alert('Falha: ' + e.message); }
+}
+
+async function loadTenantsList() {
+  const el = qid('settings-tenants-list');
+  if (!el || CURRENT_ROLE !== 'admin') return;
+  try {
+    const r = await apiFetch('/api/tenants');
+    const tenants = await r.json();
+    if (!r.ok) { el.innerHTML = '<p style="color:var(--red)">Erro ao listar</p>'; return; }
+    const sel = qid('set-new-tenant-sel');
+    if (sel) {
+      sel.innerHTML = '<option value="*">Global (*)</option>' +
+        tenants.map(t => `<option value="${t.id}">${t.name} (${t.id})</option>`).join('');
+    }
+    el.innerHTML = tenants.length ? tenants.map(t => `
+      <div class="list-item" style="margin-bottom:6px">
+        <div class="li-info">
+          <div class="li-name">${t.name} <span style="color:var(--text2);font-weight:400">· ${t.id}</span></div>
+          <div class="li-meta">${t.connections} conexões · ${t.users} utilizadores</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          ${t.id !== 'default' ? `<button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="deleteTenant(${JSON.stringify(t.id)})">Remover</button>` : '<span class="li-meta">padrão</span>'}
+        </div>
+      </div>`).join('') : '<p class="empty">Sem tenants</p>';
+  } catch (e) { el.innerHTML = '<p style="color:var(--red)">' + e.message + '</p>'; }
+}
+
+async function createTenant() {
+  const name = qid('set-new-tenant').value.trim();
+  const tenant_id = qid('set-new-tenant-id').value.trim();
+  if (!name) { alert('Indique o nome do tenant.'); return; }
+  try {
+    const body = tenant_id ? { name, tenant_id } : { name };
+    const r = await apiFetch('/api/tenants', { method: 'POST', body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { alert('Erro: ' + (d.detail || JSON.stringify(d))); return; }
+    qid('set-new-tenant').value = '';
+    qid('set-new-tenant-id').value = '';
+    await loadTenantsList();
+    alert('Tenant criado: ' + d.name);
+  } catch (e) { alert('Falha: ' + e.message); }
+}
+
+async function deleteTenant(id) {
+  if (!confirm('Remover tenant ' + id + '?')) return;
+  try {
+    const r = await apiFetch('/api/tenants/' + encodeURIComponent(id), { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('Erro: ' + (d.detail || r.status)); return; }
+    await loadTenantsList();
   } catch (e) { alert('Falha: ' + e.message); }
 }
 
@@ -1699,7 +1804,7 @@ async function loadUsersList() {
       <div class="list-item" style="margin-bottom:6px">
         <div class="li-info">
           <div class="li-name">${u.username}</div>
-          <div class="li-meta">função: ${u.role}</div>
+          <div class="li-meta">função: ${u.role} · tenant: ${u.tenant_id || 'default'}</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           ${u.username !== CURRENT_USER ? `<button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="deleteUserFromSettings(${JSON.stringify(u.username)})">Remover</button>` : ''}
@@ -1713,9 +1818,10 @@ async function createUserFromSettings() {
   const username = qid('set-new-user').value.trim();
   const password = qid('set-new-pass').value;
   const role = qid('set-new-role').value;
+  const tenant_id = (qid('set-new-tenant-sel') && qid('set-new-tenant-sel').value) || 'default';
   if (!username || !password) { alert('Preencha login e palavra-passe.'); return; }
   try {
-    const r = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username, password, role }) });
+    const r = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username, password, role, tenant_id }) });
     const d = await r.json();
     if (!r.ok) { alert('Erro: ' + (d.detail || JSON.stringify(d))); return; }
     qid('set-new-user').value = '';

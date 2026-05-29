@@ -36,9 +36,18 @@
 - [x] `.gitignore` protege `.env`, dumps `.sql`, `data/` e arquivos comprimidos
 - [x] Projeto publicado no GitHub (DBMaster) e CI de verificação
 
+## v2.2 — novos módulos (entregue)
+- [x] Template HTML para e-mail de aprovação (multipart texto+HTML)
+- [x] Mascaramento LGPD automático no restore (`mask_lgpd`, anonimização MD5)
+- [x] Exportação Parquet + upload AWS S3 (`POST /api/export/parquet`)
+- [x] Multi-tenant: `tenant_id` em conexões/utilizadores, scoping e gestão na UI
+- [x] Backup incremental via Percona XtraBackup (`/api/backups/xtrabackup` + script)
+- [x] Sandbox Proxmox LXC automatizado (`/api/sandbox/proxmox`)
+- [x] Agente Go (`agent/`): binário único + unit systemd + Makefile, validado no CI
+
 ## Próximos passos
-- [ ] Validar restore ponta-a-ponta contra MySQL real e registar evidência
-- [ ] Template HTML para e-mail de aprovação
-- [ ] Mascaramento LGPD automático no restore
-- [ ] Backup incremental (Percona XtraBackup)
+- [ ] Validar restore e XtraBackup ponta-a-ponta contra MySQL/MariaDB real
+- [ ] Regras de mascaramento LGPD personalizáveis por coluna (UI)
+- [ ] Automatizar o `pct exec` do sandbox (SSH ao host Proxmox) end-to-end
+- [ ] Publicar binários do agente Go em GitHub Releases (CI)
 - [ ] Mover store JSON para base de dados real (SQLAlchemy) em produção

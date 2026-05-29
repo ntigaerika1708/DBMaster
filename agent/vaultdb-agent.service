@@ -1,0 +1,22 @@
+[Unit]
+Description=VaultDB Agent — backups agendados via Director API
+Documentation=https://github.com/ntigaerika1708/DBMaster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Credenciais e alvo via /etc/vaultdb-agent.env (ver vaultdb-agent.env.example)
+EnvironmentFile=/etc/vaultdb-agent.env
+ExecStart=/usr/local/bin/vaultdb-agent
+Restart=on-failure
+RestartSec=15
+# Endurecimento básico
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

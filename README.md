@@ -165,6 +165,14 @@ GET  /api/users                  → listar utilizadores (admin)
 POST /api/users                  → criar utilizador (admin)
 DELETE /api/users/{username}     → remover utilizador (admin)
 POST /api/users/{username}/password → alterar palavra-passe (admin)
+GET  /api/tenants                → listar tenants (admin)
+POST /api/tenants                → criar tenant (admin)
+DELETE /api/tenants/{id}         → remover tenant (admin)
+POST /api/export/parquet         → exportar tabelas para Parquet (+ S3 opcional)
+POST /api/backups/xtrabackup     → backup físico full/incremental (XtraBackup)
+GET  /api/backups/xtrabackup/script → script XtraBackup p/ host da BD
+POST /api/sandbox/proxmox        → criar LXC e validar restauro isolado
+DELETE /api/sandbox/proxmox/{vmid} → destruir sandbox
 POST /api/alerts/test            → testar alertas
 GET  /api/stats                  → estatísticas gerais
 GET  /metrics                    → Prometheus metrics
@@ -182,17 +190,30 @@ GET  /api/docs                   → Swagger UI
 
 ## Roadmap (Próximas versões)
 
-- [ ] Agente Go (binário único, systemd)
-- [ ] Backup incremental via Percona XtraBackup
-- [ ] Mascaramento LGPD automático no restore
-- [ ] Sandbox Proxmox LXC automatizado
-- [ ] Exportação Parquet para AWS S3
-- [ ] Interface de aprovação de restore por e-mail (template HTML)
+- [x] Agente Go (binário único, systemd) — ver `agent/`
+- [x] Backup incremental via Percona XtraBackup (`POST /api/backups/xtrabackup`)
+- [x] Mascaramento LGPD automático no restore (`mask_lgpd`)
+- [x] Sandbox Proxmox LXC automatizado (`POST /api/sandbox/proxmox`)
+- [x] Exportação Parquet para AWS S3 (`POST /api/export/parquet`)
+- [x] Interface de aprovação de restore por e-mail (template HTML)
 - [x] Página de confirmação de restore no browser (sem erro 405)
-- [x] Multi-utilizador com papéis (admin/viewer) e gestão na UI
-- [x] Configuração de SMTP/Telegram pelo painel
+- [x] Multi-tenant com papéis (admin/viewer) e gestão na UI
+- [x] Configuração de SMTP/Telegram/Proxmox pelo painel
+- [ ] Mascaramento LGPD com regras personalizáveis por coluna (UI)
+- [ ] Migração do `store.json` para base de dados (SQLAlchemy)
 
 ## Histórico de alterações recentes
+
+### v2.2 — novos módulos
+- **Agente Go (`agent/`):** binário único e estático (sem CGO) que dispara backups via Director API em intervalo configurável; inclui unit `systemd`, `Makefile` e `.env`. CI valida `go vet` + `go build`.
+- **XtraBackup incremental:** `POST /api/backups/xtrabackup` (full/incremental com encadeamento por LSN quando o binário existe no host) e `GET /api/backups/xtrabackup/script` (script `full|incremental|prepare|restore` para correr no host da BD).
+- **Mascaramento LGPD:** quando `mask_lgpd=true` no pedido de restore, colunas sensíveis (e-mail, nome, CPF/CNPJ/RG, telefone, endereço, datas de nascimento, segredos) são anonimizadas deterministicamente (MD5) após o restauro, sem tocar em chaves primárias.
+- **Sandbox Proxmox:** `POST /api/sandbox/proxmox` cria um LXC isolado (API Proxmox via token) e devolve um script `pct exec` para instalar a BD, restaurar e validar; `DELETE /api/sandbox/proxmox/{vmid}` destrói.
+- **Exportação Parquet/S3:** `POST /api/export/parquet` (pyarrow) com upload opcional para AWS S3 (boto3); também acionável no backup via `export_parquet`.
+- **Multi-tenant:** `tenants` no store, `tenant_id` em conexões/utilizadores, scoping automático de conexões e ações; gestão de tenants e Proxmox no menu **Configurações**.
+- **E-mail de aprovação:** agora em HTML responsivo (multipart texto+HTML).
+
+### v2.1
 
 - **Restore MySQL robusto:** aplicação do dump via cliente `mysql`/`mariadb` em streaming; trata a linha *sandbox* do MariaDB, `LOCK TABLES` e o par `AUTOCOMMIT`. Fallback PyMySQL passa a ignorar `SET … AUTOCOMMIT`, corrigindo o erro **1231** (`autocommit can't be set to the value of 'NULL'`).
 - **Aprovação de restore:** `GET /api/restore/confirm?token=` mostra página de confirmação (resolve o **405** ao abrir o link no browser); `POST /api/restore/approve-submit` para o formulário; botão «Aprovar» no painel via JSON.

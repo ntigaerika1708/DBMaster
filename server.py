@@ -31,6 +31,13 @@ Endpoints:
   GET  /metrics                         → Prometheus metrics
   GET  /api/er-diagram/{conn_id}/{db}   → diagrama ER (chaves estrangeiras)
   POST /api/export/parquet              → exportar para Parquet / S3
+  POST /api/backups/xtrabackup          → backup físico full/incremental (XtraBackup)
+  GET  /api/backups/xtrabackup/script   → script XtraBackup p/ host remoto
+  GET  /api/tenants                     → listar tenants (admin)
+  POST /api/tenants                     → criar tenant (admin)
+  DELETE /api/tenants/{id}              → remover tenant (admin)
+  POST /api/sandbox/proxmox             → criar LXC e validar restauro isolado
+  DELETE /api/sandbox/proxmox/{vmid}    → destruir sandbox
   POST /api/alerts/test                 → testar alertas Telegram
 """
 
@@ -127,10 +134,14 @@ def _default_store() -> dict:
         "schedules": {},
         "audit": [],
         "restore_requests": {},
+        "tenants": {
+            "default": {"id": "default", "name": "Default", "created": datetime.now().isoformat()}
+        },
         "users": {
             "admin": {
                 "password_hash": hashlib.sha256(b"vaultdb2024").hexdigest(),
                 "role": "admin",
+                "tenant_id": "*",
             }
         },
         "settings": {
@@ -140,6 +151,14 @@ def _default_store() -> dict:
             "smtp_pass": (os.getenv("SMTP_PASS") or "").strip(),
             "telegram_token": (os.getenv("TELEGRAM_TOKEN") or "").strip(),
             "telegram_chat_id": (os.getenv("TELEGRAM_CHAT_ID") or "").strip(),
+            "proxmox_host": (os.getenv("PROXMOX_HOST") or "").strip(),
+            "proxmox_node": (os.getenv("PROXMOX_NODE") or "pve").strip(),
+            "proxmox_token_id": (os.getenv("PROXMOX_TOKEN_ID") or "").strip(),
+            "proxmox_token_secret": (os.getenv("PROXMOX_TOKEN_SECRET") or "").strip(),
+            "proxmox_template": (os.getenv("PROXMOX_TEMPLATE") or "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst").strip(),
+            "proxmox_storage": (os.getenv("PROXMOX_STORAGE") or "local-lvm").strip(),
+            "proxmox_bridge": (os.getenv("PROXMOX_BRIDGE") or "vmbr0").strip(),
+            "proxmox_verify_tls": (os.getenv("PROXMOX_VERIFY_TLS") or "false").strip().lower() in ("1", "true", "yes"),
         },
     }
 
@@ -157,6 +176,14 @@ def _ensure_store_defaults(data: dict) -> bool:
         for uname, u in data["users"].items():
             if isinstance(u, dict) and "role" not in u:
                 u["role"] = "admin" if uname == "admin" else "viewer"
+                changed = True
+            if isinstance(u, dict) and "tenant_id" not in u:
+                u["tenant_id"] = "*" if (uname == "admin" or u.get("role") == "admin") else "default"
+                changed = True
+    if "connections" in data and isinstance(data["connections"], dict):
+        for c in data["connections"].values():
+            if isinstance(c, dict) and not c.get("tenant_id"):
+                c["tenant_id"] = "default"
                 changed = True
     if "settings" in data and isinstance(data["settings"], dict):
         s = data["settings"]
@@ -234,6 +261,7 @@ class ConnectionConfig(BaseModel):
     database: Optional[str] = None
     tags: list[str] = []
     notes: Optional[str] = None
+    tenant_id: Optional[str] = None  # multi-tenant: organização dona da conexão
 
 class BackupTrigger(BaseModel):
     connection_id: str
@@ -292,6 +320,27 @@ class SettingsUpdate(BaseModel):
     smtp_pass: Optional[str] = None  # vazio = não alterar; "__CLEAR__" = limpar
     telegram_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    proxmox_host: Optional[str] = None
+    proxmox_node: Optional[str] = None
+    proxmox_token_id: Optional[str] = None
+    proxmox_token_secret: Optional[str] = None  # "__CLEAR__" = limpar
+    proxmox_template: Optional[str] = None
+    proxmox_storage: Optional[str] = None
+    proxmox_bridge: Optional[str] = None
+    proxmox_verify_tls: Optional[bool] = None
+
+
+class ProxmoxSandboxRequest(BaseModel):
+    connection_id: str
+    backup_file: str
+    database: Optional[str] = None
+    vmid: Optional[int] = None
+    hostname: Optional[str] = None
+    memory_mb: int = 1024
+    cores: int = 2
+    rootfs_gb: int = 8
+    root_password: Optional[str] = None
+    destroy_after: bool = False
 
 
 class SmtpTestRequest(BaseModel):
@@ -302,10 +351,31 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=2, max_length=64)
     password: str = Field(..., min_length=4)
     role: str = "viewer"  # admin | viewer
+    tenant_id: str = "default"  # organização do utilizador ("*" = global)
+
+
+class TenantCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=64)
+    tenant_id: Optional[str] = None  # gerado a partir do nome se omitido
 
 
 class UserPasswordUpdate(BaseModel):
     password: str = Field(..., min_length=4)
+
+
+class ParquetExportRequest(BaseModel):
+    connection_id: str
+    database: str
+    tables: Optional[list[str]] = None
+    s3_bucket: Optional[str] = None
+    s3_prefix: Optional[str] = None  # ex: "vaultdb/exports"
+
+
+class XtraBackupRequest(BaseModel):
+    connection_id: str
+    mode: str = "full"  # full | incremental
+    parallel: int = 4
+    base_target: Optional[str] = None  # diretório base p/ incremental (default: último da cadeia)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -325,7 +395,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> Optional[dict]:
     if not token:
         return None
     if not JWT_AVAILABLE or token.startswith("dev-token-"):
-        return {"sub": "admin", "role": "admin"}
+        return {"sub": "admin", "role": "admin", "tenant_id": "*"}
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -349,6 +419,44 @@ def require_admin(user=Depends(require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Apenas administradores")
     return user
+
+
+# ── Multi-tenant ────────────────────────────────────────────────────────────────
+
+def _user_tenant(user) -> str:
+    return (user or {}).get("tenant_id") or "default"
+
+
+def _user_is_global(user) -> bool:
+    """Admin ou utilizador com tenant '*' enxerga todos os tenants."""
+    return bool(user) and (user.get("role") == "admin" or user.get("tenant_id") == "*")
+
+
+def _assert_tenant_access(user, tenant_id: Optional[str]):
+    if _user_is_global(user):
+        return
+    if (tenant_id or "default") != _user_tenant(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Sem acesso a este tenant")
+
+
+def _assert_conn_access(user, conn_id: str):
+    """Garante que o utilizador pode operar sobre a conexão (mesmo tenant ou global)."""
+    store = load_store()
+    data = store["connections"].get(conn_id)
+    if not data:
+        raise HTTPException(404, f"Conexão '{conn_id}' não encontrada")
+    _assert_tenant_access(user, data.get("tenant_id"))
+
+
+def _resolve_tenant_for_create(user, requested: Optional[str]) -> str:
+    """Tenant a atribuir a um novo recurso: global pode escolher, restante herda o seu."""
+    if _user_is_global(user):
+        tid = (requested or "default").strip() or "default"
+        store = load_store()
+        if tid != "*" and tid not in store.get("tenants", {}):
+            raise HTTPException(400, f"Tenant '{tid}' não existe")
+        return tid
+    return _user_tenant(user)
 
 
 # ── Audit ──────────────────────────────────────────────────────────────────────
@@ -656,9 +764,9 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
     user = store["users"].get(form.username)
     if not user or not verify_password(form.password, user["password_hash"]):
         raise HTTPException(401, "Credenciais inválidas")
-    token = create_access_token({"sub": form.username, "role": user.get("role", "viewer")})
+    token = create_access_token({"sub": form.username, "role": user.get("role", "viewer"), "tenant_id": user.get("tenant_id", "default")})
     audit_log("LOGIN", form.username, "auth", "Login bem-sucedido")
-    return {"access_token": token, "token_type": "bearer", "role": user.get("role", "viewer")}
+    return {"access_token": token, "token_type": "bearer", "role": user.get("role", "viewer"), "tenant_id": user.get("tenant_id", "default")}
 
 @app.post("/api/auth/token/json", tags=["Auth"])
 def login_json(body: TokenRequest):
@@ -666,9 +774,9 @@ def login_json(body: TokenRequest):
     user = store["users"].get(body.username)
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Credenciais inválidas")
-    token = create_access_token({"sub": body.username, "role": user.get("role", "viewer")})
+    token = create_access_token({"sub": body.username, "role": user.get("role", "viewer"), "tenant_id": user.get("tenant_id", "default")})
     audit_log("LOGIN", body.username, "auth", "Login JSON bem-sucedido")
-    return {"access_token": token, "token_type": "bearer", "role": user.get("role", "viewer")}
+    return {"access_token": token, "token_type": "bearer", "role": user.get("role", "viewer"), "tenant_id": user.get("tenant_id", "default")}
 
 # ── Routes: Connections ────────────────────────────────────────────────────────
 
@@ -677,11 +785,13 @@ def create_connection(cfg: ConnectionConfig, user=Depends(require_auth)):
     store = load_store()
     conn_id = f"{cfg.engine}-{cfg.host}-{cfg.name}".replace(" ", "_").lower()
     conn_id = hashlib.md5(conn_id.encode()).hexdigest()[:12]
-    store["connections"][conn_id] = {**cfg.dict(), "id": conn_id, "created": datetime.now().isoformat()}
+    tenant_id = _resolve_tenant_for_create(user, cfg.tenant_id)
+    record = {**cfg.dict(), "id": conn_id, "tenant_id": tenant_id, "created": datetime.now().isoformat()}
+    store["connections"][conn_id] = record
     save_store(store)
     active_connections.set(len(store["connections"]))
-    audit_log("CONN_CREATE", user["sub"] if isinstance(user, dict) else "admin", conn_id, f"Conexão {cfg.name} ({cfg.engine}@{cfg.host})")
-    return {"id": conn_id, **cfg.dict(exclude={"password"})}
+    audit_log("CONN_CREATE", user["sub"] if isinstance(user, dict) else "admin", conn_id, f"Conexão {cfg.name} ({cfg.engine}@{cfg.host}) tenant={tenant_id}")
+    return {"id": conn_id, "tenant_id": tenant_id, **cfg.dict(exclude={"password"})}
 
 @app.get("/api/connections", tags=["Connections"])
 def list_connections(user=Depends(require_auth)):
@@ -689,6 +799,7 @@ def list_connections(user=Depends(require_auth)):
     return [
         {k: v for k, v in conn.items() if k != "password"}
         for conn in store["connections"].values()
+        if _user_is_global(user) or conn.get("tenant_id", "default") == _user_tenant(user)
     ]
 
 @app.delete("/api/connections/{conn_id}", tags=["Connections"])
@@ -696,6 +807,7 @@ def delete_connection(conn_id: str, user=Depends(require_auth)):
     store = load_store()
     if conn_id not in store["connections"]:
         raise HTTPException(404, "Conexão não encontrada")
+    _assert_tenant_access(user, store["connections"][conn_id].get("tenant_id"))
     name = store["connections"][conn_id].get("name", conn_id)
     del store["connections"][conn_id]
     save_store(store)
@@ -761,6 +873,7 @@ def test_connection(cfg: ConnectionConfig):
 @app.get("/api/connections/{conn_id}/databases", tags=["Connections"])
 def list_databases(conn_id: str, user=Depends(require_auth)):
     """Lista bancos usando credenciais salvas (senha não exposta ao frontend)."""
+    _assert_conn_access(user, conn_id)
     cfg = get_conn_by_id(conn_id)
     start = time.time()
     try:
@@ -802,6 +915,7 @@ def list_databases(conn_id: str, user=Depends(require_auth)):
 
 @app.get("/api/connections/{conn_id}/tables/{database}", tags=["Connections"])
 def list_tables(conn_id: str, database: str, user=Depends(require_auth)):
+    _assert_conn_access(user, conn_id)
     cfg = get_conn_by_id(conn_id)
     cfg.database = database
     try:
@@ -979,6 +1093,7 @@ def _build_mysql_er_diagram(conn, database: str) -> dict:
 @app.get("/api/er-diagram/{conn_id}/{database}", tags=["Engineering"])
 def get_er_diagram(conn_id: str, database: str, user=Depends(require_auth)):
     """Retorna estrutura de FK (formais + inferidas) para diagrama ER interativo."""
+    _assert_conn_access(user, conn_id)
     cfg = get_conn_by_id(conn_id)
     cfg.database = database
     try:
@@ -997,6 +1112,7 @@ def get_er_diagram(conn_id: str, database: str, user=Depends(require_auth)):
 @app.post("/api/backups/trigger", tags=["Backup"])
 def trigger_backup(cfg: BackupTrigger, user=Depends(require_auth)):
     """Dispara backup. Se Celery disponível, enfileira como task assíncrona."""
+    _assert_conn_access(user, cfg.connection_id)
     conn = get_conn_by_id(cfg.connection_id)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = cfg.output_name or f"{cfg.database}_{ts}"
@@ -1019,6 +1135,13 @@ def trigger_backup(cfg: BackupTrigger, user=Depends(require_auth)):
     result = _run_backup_sync(conn, cfg, name, ts)
     backup_total.labels(engine=conn.engine, status="success").inc()
     backup_size_bytes.observe(result.get("size_bytes", 0))
+    if cfg.export_parquet and conn.engine in ("mysql", "postgresql"):
+        try:
+            result["parquet"] = _export_to_parquet(conn, cfg.database, cfg.tables, cfg.s3_bucket)
+        except HTTPException as exc:
+            result["parquet"] = {"success": False, "error": exc.detail}
+        except Exception as exc:
+            result["parquet"] = {"success": False, "error": str(exc)[:200]}
     return {**result, "status": "success"}
 
 def _run_backup_sync(conn: ConnectionConfig, cfg: BackupTrigger, name: str, ts: str) -> dict:
@@ -1304,7 +1427,10 @@ def _approve_restore_execute(token: str) -> dict:
 
     try:
         conn = get_conn_by_id(request["connection_id"])
-        result = _run_restore_sync(conn, request["database"], request["backup_file"], request.get("tables"))
+        result = _run_restore_sync(
+            conn, request["database"], request["backup_file"],
+            request.get("tables"), mask_lgpd=bool(request.get("mask_lgpd")),
+        )
         store = load_store()
         store["restore_requests"][req_id]["status"] = "executed"
         store["restore_requests"][req_id]["executed_at"] = datetime.now().isoformat()
@@ -1334,6 +1460,7 @@ def request_restore(cfg: RestoreRequest, request: Request, user=Depends(require_
     A execução real só ocorre após aprovação (POST com token — painel ou página HTML).
     REGRA INFLEXÍVEL: nenhum restore é executado sem trilha de auditoria.
     """
+    _assert_conn_access(user, cfg.connection_id)
     token = secrets.token_urlsafe(32)
     request_id = secrets.token_hex(12)
     store = load_store()
@@ -1515,7 +1642,115 @@ def linux_prepare_script(req: LinuxPrepareScriptRequest, user=Depends(require_au
     }
 
 
-def _run_restore_sync(conn: ConnectionConfig, database: str, backup_file: str, tables=None) -> dict:
+# ── Mascaramento LGPD ──────────────────────────────────────────────────────────
+# Categoriza colunas pelo nome e aplica anonimização determinística (MD5) após o restore.
+_LGPD_PATTERNS = [
+    ("email", re.compile(r"(?i)(e-?mail)")),
+    ("name", re.compile(r"(?i)(nome|fullname|first_?name|last_?name|sobrenome|\bname\b)")),
+    ("birth", re.compile(r"(?i)(nascimento|birth|\bdob\b|data_?nasc)")),
+    ("doc", re.compile(r"(?i)(cpf|cnpj|\brg\b|telefone|celular|\bfone\b|phone|mobile|endereco|address|logradouro|\bcep\b|\bzip\b|postal|senha|passwd|password|secret|token|cartao|\bcard\b|credit)")),
+]
+
+
+def _lgpd_category(column: str) -> Optional[str]:
+    for cat, rx in _LGPD_PATTERNS:
+        if rx.search(column or ""):
+            return cat
+    return None
+
+
+def _lgpd_mysql_expr(cat: str, col: str, data_type: str) -> Optional[str]:
+    dt = (data_type or "").lower()
+    is_str = any(t in dt for t in ("char", "text", "enum", "set"))
+    is_date = any(t in dt for t in ("date", "time", "year"))
+    if cat == "birth" and is_date:
+        return "'1900-01-01'"
+    if cat == "email" and is_str:
+        return f"CONCAT(LEFT(MD5(`{col}`),10),'@anonimizado.lgpd')"
+    if cat == "name" and is_str:
+        return f"CONCAT('Titular ',LEFT(MD5(`{col}`),6))"
+    if cat == "doc" and is_str:
+        return f"CONCAT('***',LEFT(MD5(`{col}`),8))"
+    return None
+
+
+def _lgpd_pg_expr(cat: str, col: str, data_type: str) -> Optional[str]:
+    dt = (data_type or "").lower()
+    is_str = any(t in dt for t in ("char", "text"))
+    is_date = "date" in dt or "timestamp" in dt
+    if cat == "birth" and is_date:
+        return "'1900-01-01'"
+    if cat == "email" and is_str:
+        return f"left(md5(\"{col}\"::text),10)||'@anonimizado.lgpd'"
+    if cat == "name" and is_str:
+        return f"'Titular '||left(md5(\"{col}\"::text),6)"
+    if cat == "doc" and is_str:
+        return f"'***'||left(md5(\"{col}\"::text),8)"
+    return None
+
+
+def _apply_lgpd_masking(conn: ConnectionConfig, database: str, tables=None) -> dict:
+    """Anonimiza colunas sensíveis no destino após o restore. Não toca em chaves primárias."""
+    table_filter = set(tables) if tables else None
+    masked, errors = [], []
+    if conn.engine == "mysql":
+        db = connect_mysql(conn)
+        cur = db.cursor()
+        cur.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_KEY "
+            "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=%s",
+            (database,),
+        )
+        cols = cur.fetchall()
+        cur.execute(f"USE `{database}`")
+        for tname, cname, dtype, ckey in cols:
+            if table_filter and tname not in table_filter:
+                continue
+            if (ckey or "") == "PRI":
+                continue
+            cat = _lgpd_category(cname)
+            if not cat:
+                continue
+            expr = _lgpd_mysql_expr(cat, cname, dtype)
+            if not expr:
+                continue
+            try:
+                cur.execute(f"UPDATE `{tname}` SET `{cname}`={expr}")
+                masked.append({"table": tname, "column": cname, "category": cat, "rows": cur.rowcount})
+            except Exception as e:
+                errors.append(f"{tname}.{cname}: {str(e)[:120]}")
+        db.commit()
+        db.close()
+    elif conn.engine == "postgresql":
+        db = connect_pg(conn)
+        db.autocommit = True
+        cur = db.cursor()
+        cur.execute(
+            "SELECT table_name, column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema='public'"
+        )
+        cols = cur.fetchall()
+        for tname, cname, dtype in cols:
+            if table_filter and tname not in table_filter:
+                continue
+            cat = _lgpd_category(cname)
+            if not cat:
+                continue
+            expr = _lgpd_pg_expr(cat, cname, dtype)
+            if not expr:
+                continue
+            try:
+                cur.execute(f'UPDATE "{tname}" SET "{cname}"={expr}')
+                masked.append({"table": tname, "column": cname, "category": cat, "rows": cur.rowcount})
+            except Exception as e:
+                errors.append(f"{tname}.{cname}: {str(e)[:120]}")
+        db.close()
+    else:
+        return {"applied": False, "reason": f"masking não suportado para engine {conn.engine}"}
+    return {"applied": True, "columns_masked": len(masked), "details": masked[:50], "errors": errors[:10]}
+
+
+def _run_restore_sync(conn: ConnectionConfig, database: str, backup_file: str, tables=None, mask_lgpd: bool = False) -> dict:
     path = os.path.join(BACKUP_DIR, backup_file)
     if not os.path.exists(path):
         raise HTTPException(404, f"Arquivo {backup_file} não encontrado")
@@ -1527,6 +1762,11 @@ def _run_restore_sync(conn: ConnectionConfig, database: str, backup_file: str, t
 
         cli_out = _run_mysql_restore_via_cli(conn, database, path)
         if cli_out is not None:
+            if mask_lgpd:
+                try:
+                    cli_out["lgpd_masking"] = _apply_lgpd_masking(conn, database, tables)
+                except Exception as e:
+                    cli_out["lgpd_masking"] = {"applied": False, "reason": str(e)[:160]}
             return cli_out
 
         import pymysql
@@ -1596,7 +1836,273 @@ def _run_restore_sync(conn: ConnectionConfig, database: str, backup_file: str, t
     else:
         raise HTTPException(400, "Engine não suportado para restore")
 
-    return {"database": database, "statements_executed": restored, "errors": errors[:5], "backup_file": backup_file}
+    out = {"database": database, "statements_executed": restored, "errors": errors[:5], "backup_file": backup_file}
+    if mask_lgpd and conn.engine in ("mysql", "postgresql"):
+        try:
+            out["lgpd_masking"] = _apply_lgpd_masking(conn, database, tables)
+        except Exception as e:
+            out["lgpd_masking"] = {"applied": False, "reason": str(e)[:160]}
+    return out
+
+# ── Export: Parquet / AWS S3 ────────────────────────────────────────────────────
+
+def _table_to_parquet(cols: list, rows: list, out_path: str) -> int:
+    """Escreve um Parquet a partir de colunas/linhas; coage a string se o tipo não for inferível."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    data = {c: [r[i] for r in rows] for i, c in enumerate(cols)}
+    try:
+        table = pa.table(data)
+    except (pa.lib.ArrowInvalid, pa.lib.ArrowTypeError, TypeError):
+        data = {c: [None if v is None else str(v) for v in vals] for c, vals in data.items()}
+        table = pa.table(data)
+    pq.write_table(table, out_path, compression="snappy")
+    return len(rows)
+
+
+def _export_to_parquet(conn: ConnectionConfig, database: str, tables=None,
+                       s3_bucket: Optional[str] = None, s3_prefix: Optional[str] = None) -> dict:
+    try:
+        import pyarrow  # noqa: F401
+    except ImportError:
+        raise HTTPException(501, "pyarrow não instalado — exportação Parquet indisponível")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.join(BACKUP_DIR, "parquet", f"{database}_{ts}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    exported, errors = [], []
+    if conn.engine == "mysql":
+        db = connect_mysql(conn)
+        cur = db.cursor()
+        cur.execute(f"USE `{database}`")
+        if not tables:
+            cur.execute("SHOW TABLES")
+            tables = [r[0] for r in cur.fetchall()]
+        for t in tables:
+            try:
+                cur.execute(f"SELECT * FROM `{t}`")
+                cols = [d[0] for d in cur.description]
+                rows = cur.fetchall()
+                fp = os.path.join(out_dir, f"{t}.parquet")
+                n = _table_to_parquet(cols, rows, fp)
+                exported.append({"table": t, "rows": n, "file": os.path.basename(fp), "bytes": os.path.getsize(fp)})
+            except Exception as e:
+                errors.append(f"{t}: {str(e)[:140]}")
+        db.close()
+    elif conn.engine == "postgresql":
+        db = connect_pg(conn)
+        cur = db.cursor()
+        if not tables:
+            cur.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'")
+            tables = [r[0] for r in cur.fetchall()]
+        for t in tables:
+            try:
+                cur.execute(f'SELECT * FROM "{t}"')
+                cols = [d[0] for d in cur.description]
+                rows = cur.fetchall()
+                fp = os.path.join(out_dir, f"{t}.parquet")
+                n = _table_to_parquet(cols, rows, fp)
+                exported.append({"table": t, "rows": n, "file": os.path.basename(fp), "bytes": os.path.getsize(fp)})
+            except Exception as e:
+                errors.append(f"{t}: {str(e)[:140]}")
+        db.close()
+    else:
+        raise HTTPException(400, f"Exportação Parquet não suportada para engine '{conn.engine}'")
+
+    result = {
+        "success": True, "database": database, "engine": conn.engine,
+        "output_dir": out_dir, "tables_exported": len(exported),
+        "details": exported, "errors": errors[:10], "timestamp": ts,
+    }
+
+    if s3_bucket:
+        try:
+            import boto3
+            s3 = boto3.client("s3")
+            prefix = (s3_prefix or "vaultdb/parquet").strip("/")
+            uploaded = []
+            for item in exported:
+                local = os.path.join(out_dir, item["file"])
+                key = f"{prefix}/{database}_{ts}/{item['file']}"
+                s3.upload_file(local, s3_bucket, key)
+                uploaded.append(f"s3://{s3_bucket}/{key}")
+            result["s3"] = {"bucket": s3_bucket, "uploaded": uploaded}
+        except ImportError:
+            result["s3"] = {"error": "boto3 não instalado"}
+        except Exception as e:
+            result["s3"] = {"error": str(e)[:200]}
+
+    return result
+
+
+@app.post("/api/export/parquet", tags=["Export"])
+def export_parquet(req: ParquetExportRequest, user=Depends(require_auth)):
+    """Exporta tabelas para Parquet (colunar) e, opcionalmente, envia para AWS S3."""
+    _assert_conn_access(user, req.connection_id)
+    conn = get_conn_by_id(req.connection_id)
+    audit_log("EXPORT_PARQUET", user["sub"] if isinstance(user, dict) else "admin",
+              req.connection_id, f"Parquet {req.database} → S3={req.s3_bucket or '—'}", risk="medium")
+    return _export_to_parquet(conn, req.database, req.tables, req.s3_bucket, req.s3_prefix)
+
+
+# ── Backup físico incremental: Percona XtraBackup / MariaBackup ──────────────────
+
+def _xtrabackup_binary() -> Optional[str]:
+    for cand in ("xtrabackup", "mariabackup"):
+        if shutil.which(cand):
+            return cand
+    return None
+
+
+def _xtrabackup_base_dir(conn_id: str) -> str:
+    d = os.path.join(BACKUP_DIR, "xtrabackup", conn_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _xtrabackup_read_lsn(target_dir: str) -> Optional[str]:
+    cp = os.path.join(target_dir, "xtrabackup_checkpoints")
+    if not os.path.exists(cp):
+        return None
+    try:
+        with open(cp, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.strip().startswith("to_lsn"):
+                    return line.split("=", 1)[1].strip()
+    except Exception:
+        return None
+    return None
+
+
+def _run_xtrabackup(conn: ConnectionConfig, conn_id: str, mode: str, base_target: Optional[str], parallel: int) -> dict:
+    """Executa xtrabackup/mariabackup localmente (requer acesso ao datadir do servidor)."""
+    bin_ = _xtrabackup_binary()
+    if not bin_:
+        raise HTTPException(501, "xtrabackup/mariabackup não encontrado no host do Director — use o script gerado em /api/backups/xtrabackup/script")
+    base_dir = _xtrabackup_base_dir(conn_id)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cnf_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf", delete=False) as cnf:
+            cnf.write(f"[client]\nhost={conn.host}\nport={conn.port}\nuser={conn.user}\npassword={conn.password}\n")
+            cnf_path = cnf.name
+
+        if mode == "incremental":
+            chain = sorted(
+                [d for d in os.listdir(base_dir) if d.startswith(("base", "inc_"))],
+                key=lambda d: os.path.getmtime(os.path.join(base_dir, d)),
+            )
+            last = base_target or (os.path.join(base_dir, chain[-1]) if chain else None)
+            if not last or not os.path.isdir(last):
+                raise HTTPException(400, "Sem backup base para incremental — execute um full primeiro")
+            target = os.path.join(base_dir, f"inc_{ts}")
+            cmd = [bin_, f"--defaults-extra-file={cnf_path}", "--backup",
+                   f"--target-dir={target}", f"--incremental-basedir={last}", f"--parallel={parallel}"]
+        else:
+            target = os.path.join(base_dir, "base")
+            if os.path.isdir(target):
+                target = os.path.join(base_dir, f"base_{ts}")
+            cmd = [bin_, f"--defaults-extra-file={cnf_path}", "--backup",
+                   f"--target-dir={target}", f"--parallel={parallel}"]
+
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600)
+        if proc.returncode != 0:
+            raise HTTPException(400, (proc.stderr.decode(errors="replace") or "xtrabackup falhou")[-600:])
+        return {
+            "success": True, "tool": bin_, "mode": mode, "target_dir": target,
+            "to_lsn": _xtrabackup_read_lsn(target), "timestamp": ts,
+        }
+    finally:
+        if cnf_path and os.path.exists(cnf_path):
+            os.unlink(cnf_path)
+
+
+def _build_xtrabackup_script(conn: ConnectionConfig, parallel: int) -> str:
+    """Script para correr no HOST da base de dados (onde está o datadir)."""
+    return f"""#!/usr/bin/env bash
+# VaultDB — Backup físico incremental (Percona XtraBackup / MariaBackup)
+# Execute NO HOST do servidor MySQL/MariaDB (acesso ao datadir é obrigatório).
+# Uso: ./xtrabackup_vaultdb.sh [full|incremental|prepare|restore]
+set -euo pipefail
+
+HOST="{conn.host}"
+PORT="{conn.port}"
+DBUSER="{conn.user}"
+DBPASS="{conn.password}"
+BASEDIR="/var/backups/vaultdb/{conn.name.replace(' ', '_')}"
+PARALLEL="{parallel}"
+MODE="${{1:-full}}"
+
+XB="$(command -v xtrabackup || command -v mariabackup || true)"
+if [ -z "$XB" ]; then
+  echo "ERRO: instale percona-xtrabackup (MySQL) ou mariadb-backup (MariaDB)." >&2
+  exit 1
+fi
+mkdir -p "$BASEDIR"
+TS="$(date +%Y%m%d_%H%M%S)"
+CNF="$(mktemp)"; trap 'rm -f "$CNF"' EXIT
+printf '[client]\\nhost=%s\\nport=%s\\nuser=%s\\npassword=%s\\n' "$HOST" "$PORT" "$DBUSER" "$DBPASS" > "$CNF"
+
+case "$MODE" in
+  full)
+    TARGET="$BASEDIR/base"
+    rm -rf "$TARGET"
+    "$XB" --defaults-extra-file="$CNF" --backup --target-dir="$TARGET" --parallel="$PARALLEL"
+    echo "Base criada em $TARGET"
+    ;;
+  incremental)
+    LAST="$(ls -dt "$BASEDIR"/inc_* "$BASEDIR"/base 2>/dev/null | head -n1)"
+    [ -n "$LAST" ] || {{ echo "Sem base — corra '$0 full' primeiro" >&2; exit 1; }}
+    TARGET="$BASEDIR/inc_$TS"
+    "$XB" --defaults-extra-file="$CNF" --backup --target-dir="$TARGET" --incremental-basedir="$LAST" --parallel="$PARALLEL"
+    echo "Incremental criado em $TARGET (base: $LAST)"
+    ;;
+  prepare)
+    "$XB" --prepare --apply-log-only --target-dir="$BASEDIR/base"
+    for INC in $(ls -dt "$BASEDIR"/inc_* 2>/dev/null | tac); do
+      "$XB" --prepare --apply-log-only --target-dir="$BASEDIR/base" --incremental-dir="$INC"
+    done
+    "$XB" --prepare --target-dir="$BASEDIR/base"
+    echo "Backup consolidado e pronto para restauro em $BASEDIR/base"
+    ;;
+  restore)
+    echo "Pare o servidor: systemctl stop mariadb || systemctl stop mysql"
+    echo "Depois: $XB --copy-back --target-dir=$BASEDIR/base && chown -R mysql:mysql /var/lib/mysql && systemctl start mariadb"
+    ;;
+  *)
+    echo "Uso: $0 [full|incremental|prepare|restore]" >&2; exit 2;;
+esac
+"""
+
+
+@app.post("/api/backups/xtrabackup", tags=["Backup"])
+def trigger_xtrabackup(req: XtraBackupRequest, user=Depends(require_auth)):
+    """Backup físico (full/incremental) via XtraBackup — executa localmente se o binário existir."""
+    _assert_conn_access(user, req.connection_id)
+    conn = get_conn_by_id(req.connection_id)
+    if conn.engine != "mysql":
+        raise HTTPException(400, "XtraBackup só suporta MySQL/MariaDB")
+    audit_log("XTRABACKUP", user["sub"] if isinstance(user, dict) else "admin",
+              req.connection_id, f"XtraBackup {req.mode}", risk="medium")
+    result = _run_xtrabackup(conn, req.connection_id, req.mode, req.base_target, req.parallel)
+    store = load_store()
+    chains = store.setdefault("xtrabackup_chains", {})
+    chain = chains.setdefault(req.connection_id, [])
+    chain.append({"mode": req.mode, "target_dir": result["target_dir"], "to_lsn": result.get("to_lsn"), "ts": result["timestamp"]})
+    save_store(store)
+    return result
+
+
+@app.get("/api/backups/xtrabackup/script", tags=["Backup"])
+def xtrabackup_script(connection_id: str = Query(...), parallel: int = 4, user=Depends(require_auth)):
+    """Gera script bash de XtraBackup para correr no host do servidor (datadir local)."""
+    _assert_conn_access(user, connection_id)
+    conn = get_conn_by_id(connection_id)
+    if conn.engine != "mysql":
+        raise HTTPException(400, "XtraBackup só suporta MySQL/MariaDB")
+    return {"filename": "xtrabackup_vaultdb.sh", "script": _build_xtrabackup_script(conn, parallel)}
+
 
 # ── Routes: Schedules ──────────────────────────────────────────────────────────
 
@@ -1645,6 +2151,14 @@ def api_get_settings(user=Depends(require_admin)):
         "smtp_pass_configured": bool(pw),
         "telegram_token_configured": bool(tt),
         "telegram_chat_id": tc,
+        "proxmox_host": (s.get("proxmox_host") or "").strip(),
+        "proxmox_node": (s.get("proxmox_node") or "pve").strip(),
+        "proxmox_token_id": (s.get("proxmox_token_id") or "").strip(),
+        "proxmox_token_secret_configured": bool((s.get("proxmox_token_secret") or "").strip()),
+        "proxmox_template": (s.get("proxmox_template") or "").strip(),
+        "proxmox_storage": (s.get("proxmox_storage") or "").strip(),
+        "proxmox_bridge": (s.get("proxmox_bridge") or "vmbr0").strip(),
+        "proxmox_verify_tls": bool(s.get("proxmox_verify_tls")),
     }
 
 
@@ -1670,12 +2184,23 @@ def api_put_settings(body: SettingsUpdate, user=Depends(require_admin)):
             st["telegram_token"] = body.telegram_token.strip()
     if body.telegram_chat_id is not None:
         st["telegram_chat_id"] = body.telegram_chat_id.strip()
+    for field in ("proxmox_host", "proxmox_node", "proxmox_template", "proxmox_storage", "proxmox_bridge", "proxmox_token_id"):
+        val = getattr(body, field, None)
+        if val is not None:
+            st[field] = val.strip()
+    if body.proxmox_token_secret is not None:
+        if body.proxmox_token_secret == "__CLEAR__":
+            st["proxmox_token_secret"] = ""
+        elif body.proxmox_token_secret != "":
+            st["proxmox_token_secret"] = body.proxmox_token_secret.strip()
+    if body.proxmox_verify_tls is not None:
+        st["proxmox_verify_tls"] = bool(body.proxmox_verify_tls)
     save_store(store)
     audit_log(
         "SETTINGS_UPDATE",
         user["sub"],
         "settings",
-        "Configurações SMTP/Telegram atualizadas no painel",
+        "Configurações (SMTP/Telegram/Proxmox) atualizadas no painel",
         risk="high",
     )
     return api_get_settings(user)
@@ -1715,7 +2240,11 @@ def api_test_smtp(body: SmtpTestRequest, user=Depends(require_admin)):
 def api_list_users(user=Depends(require_admin)):
     store = load_store()
     return [
-        {"username": name, "role": u.get("role", "viewer") if isinstance(u, dict) else "viewer"}
+        {
+            "username": name,
+            "role": u.get("role", "viewer") if isinstance(u, dict) else "viewer",
+            "tenant_id": u.get("tenant_id", "default") if isinstance(u, dict) else "default",
+        }
         for name, u in store.get("users", {}).items()
     ]
 
@@ -1728,16 +2257,20 @@ def api_create_user(body: UserCreate, user=Depends(require_admin)):
     if body.role not in ("admin", "viewer"):
         raise HTTPException(400, "role deve ser admin ou viewer")
     store = load_store()
+    tenant_id = (body.tenant_id or "default").strip() or "default"
+    if tenant_id != "*" and tenant_id not in store.get("tenants", {}):
+        raise HTTPException(400, f"Tenant '{tenant_id}' não existe")
     users = store.setdefault("users", {})
     if uname in users:
         raise HTTPException(409, "Utilizador já existe")
     users[uname] = {
         "password_hash": hashlib.sha256(body.password.encode()).hexdigest(),
         "role": body.role,
+        "tenant_id": tenant_id,
     }
     save_store(store)
-    audit_log("USER_CREATE", user["sub"], uname, f"Novo utilizador role={body.role}", risk="high")
-    return {"username": uname, "role": body.role}
+    audit_log("USER_CREATE", user["sub"], uname, f"Novo utilizador role={body.role} tenant={tenant_id}", risk="high")
+    return {"username": uname, "role": body.role, "tenant_id": tenant_id}
 
 
 @app.delete("/api/users/{username}", tags=["Settings"])
@@ -1766,6 +2299,59 @@ def api_change_user_password(username: str, body: UserPasswordUpdate, user=Depen
     users[username]["password_hash"] = hashlib.sha256(body.password.encode()).hexdigest()
     save_store(store)
     audit_log("USER_PASSWORD", user["sub"], username, "Palavra-passe alterada", risk="high")
+    return {"success": True}
+
+
+# ── Routes: Tenants (multi-tenant) ───────────────────────────────────────────────
+
+@app.get("/api/tenants", tags=["Tenants"])
+def api_list_tenants(user=Depends(require_admin)):
+    store = load_store()
+    tenants = store.get("tenants", {})
+    users = store.get("users", {})
+    conns = store.get("connections", {})
+    out = []
+    for tid, t in tenants.items():
+        out.append({
+            **t,
+            "users": sum(1 for u in users.values() if isinstance(u, dict) and u.get("tenant_id") == tid),
+            "connections": sum(1 for c in conns.values() if isinstance(c, dict) and c.get("tenant_id", "default") == tid),
+        })
+    return out
+
+
+@app.post("/api/tenants", tags=["Tenants"])
+def api_create_tenant(body: TenantCreate, user=Depends(require_admin)):
+    tid = (body.tenant_id or re.sub(r"[^a-z0-9]+", "-", body.name.lower()).strip("-"))[:48]
+    if not tid or not re.match(r"^[a-z0-9][a-z0-9-]{1,47}$", tid):
+        raise HTTPException(400, "tenant_id inválido (use letras minúsculas, números e hífen)")
+    if tid == "*":
+        raise HTTPException(400, "tenant_id reservado")
+    store = load_store()
+    tenants = store.setdefault("tenants", {})
+    if tid in tenants:
+        raise HTTPException(409, "Tenant já existe")
+    tenants[tid] = {"id": tid, "name": body.name.strip(), "created": datetime.now().isoformat()}
+    save_store(store)
+    audit_log("TENANT_CREATE", user["sub"], tid, f"Tenant '{body.name}' criado", risk="medium")
+    return tenants[tid]
+
+
+@app.delete("/api/tenants/{tenant_id}", tags=["Tenants"])
+def api_delete_tenant(tenant_id: str, user=Depends(require_admin)):
+    if tenant_id == "default":
+        raise HTTPException(400, "O tenant 'default' não pode ser removido")
+    store = load_store()
+    tenants = store.get("tenants", {})
+    if tenant_id not in tenants:
+        raise HTTPException(404, "Tenant não encontrado")
+    used_conn = [c for c in store.get("connections", {}).values() if c.get("tenant_id") == tenant_id]
+    used_user = [n for n, u in store.get("users", {}).items() if isinstance(u, dict) and u.get("tenant_id") == tenant_id]
+    if used_conn or used_user:
+        raise HTTPException(409, f"Tenant em uso ({len(used_conn)} conexões, {len(used_user)} utilizadores)")
+    del tenants[tenant_id]
+    save_store(store)
+    audit_log("TENANT_DELETE", user["sub"], tenant_id, "Tenant removido", risk="high")
     return {"success": True}
 
 
@@ -1820,6 +2406,53 @@ def _smtp_credentials() -> tuple:
     return host, port, user, password
 
 
+def _render_approval_email_html(req_id: str, backup_file: str, database: str, justification: str, url: str) -> str:
+    """Template HTML responsivo (inline CSS para compatibilidade com clientes de e-mail)."""
+    safe = {k: html.escape(str(v)) for k, v in {
+        "req_id": req_id, "backup_file": backup_file,
+        "database": database, "justification": justification or "—",
+    }.items()}
+    url_attr = html.escape(url, quote=True)
+    return f"""<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f1115;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f1115;padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#171a21;border:1px solid #262b36;border-radius:14px;overflow:hidden;">
+        <tr><td style="background:linear-gradient(135deg,#1f6feb,#0b3d91);padding:22px 28px;">
+          <span style="font-size:20px;font-weight:700;color:#fff;">🛡️ VaultDB Security Suite</span><br>
+          <span style="font-size:13px;color:#cdd9f5;">Pedido de aprovação de restauração</span>
+        </td></tr>
+        <tr><td style="padding:26px 28px 8px;">
+          <p style="margin:0 0 16px;color:#e6edf3;font-size:15px;line-height:1.5;">
+            Foi solicitada uma <b>restauração de base de dados</b>. Esta ação é crítica e exige a sua aprovação explícita.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f1115;border:1px solid #262b36;border-radius:10px;">
+            <tr><td style="padding:14px 16px;color:#8b95a7;font-size:12px;text-transform:uppercase;letter-spacing:.5px;">Detalhes</td></tr>
+            <tr><td style="padding:0 16px 14px;color:#e6edf3;font-size:14px;line-height:1.9;">
+              <b style="color:#8b95a7;">ID:</b> {safe['req_id']}<br>
+              <b style="color:#8b95a7;">Backup:</b> {safe['backup_file']}<br>
+              <b style="color:#8b95a7;">Base destino:</b> {safe['database']}<br>
+              <b style="color:#8b95a7;">Justificação:</b> {safe['justification']}
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr><td align="center">
+            <a href="{url_attr}" style="display:inline-block;background:#238636;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:13px 30px;border-radius:9px;">✓ Rever e aprovar restauração</a>
+          </td></tr></table>
+          <p style="margin:0 0 20px;color:#8b95a7;font-size:12px;line-height:1.5;word-break:break-all;">
+            Se o botão não funcionar, copie este link para o navegador:<br>
+            <a href="{url_attr}" style="color:#58a6ff;">{url_attr}</a>
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #262b36;color:#5b6472;font-size:11px;">
+          Não pediu esta restauração? Ignore este e-mail — nenhuma ação será executada sem confirmação. · VaultDB · LGPD/Compliance
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
 def _send_approval_email(to: str, req_id: str, backup_file: str, database: str, justification: str, url: str) -> bool:
     """Envia e-mail de aprovação se SMTP estiver completo (painel ou variáveis de ambiente)."""
     log.info(
@@ -1846,11 +2479,13 @@ def _send_approval_email(to: str, req_id: str, backup_file: str, database: str, 
             f"Justificativa: {justification}\n\n"
             f"Para aprovar, abra no navegador (confirme na página):\n{url}\n"
         )
-        msg = MIMEMultipart()
+        html_body = _render_approval_email_html(req_id, backup_file, database, justification, url)
+        msg = MIMEMultipart("alternative")
         msg["Subject"] = "VaultDB — Aprovar restore"
         msg["From"] = user
         msg["To"] = to
         msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
         with smtplib.SMTP(host, port, timeout=20) as smtp:
             smtp.ehlo()
@@ -1865,6 +2500,148 @@ def _send_approval_email(to: str, req_id: str, backup_file: str, database: str, 
     except Exception as ex:
         log.warning("approval_email_failed", error=str(ex)[:300])
         return False
+
+# ── Sandbox Proxmox LXC (validação de restore isolada) ──────────────────────────
+
+def _proxmox_cfg() -> dict:
+    s = _settings_dict()
+    cfg = {
+        "host": (s.get("proxmox_host") or "").strip(),
+        "node": (s.get("proxmox_node") or "pve").strip(),
+        "token_id": (s.get("proxmox_token_id") or "").strip(),
+        "token_secret": (s.get("proxmox_token_secret") or "").strip(),
+        "template": (s.get("proxmox_template") or "").strip(),
+        "storage": (s.get("proxmox_storage") or "local-lvm").strip(),
+        "bridge": (s.get("proxmox_bridge") or "vmbr0").strip(),
+        "verify_tls": bool(s.get("proxmox_verify_tls")),
+    }
+    if not cfg["host"] or not cfg["token_id"] or not cfg["token_secret"]:
+        raise HTTPException(400, "Proxmox não configurado — defina host/token em Configurações")
+    if not HTTPX_AVAILABLE:
+        raise HTTPException(501, "httpx não instalado — integração Proxmox indisponível")
+    return cfg
+
+
+def _proxmox_api(cfg: dict, method: str, path: str, data: Optional[dict] = None):
+    import httpx
+    base = f"https://{cfg['host']}:8006/api2/json"
+    headers = {"Authorization": f"PVEAPIToken={cfg['token_id']}={cfg['token_secret']}"}
+    try:
+        r = httpx.request(method, f"{base}{path}", headers=headers, data=data,
+                          verify=cfg["verify_tls"], timeout=30)
+    except Exception as e:
+        raise HTTPException(502, f"Falha ao contactar Proxmox: {str(e)[:200]}") from e
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Proxmox {r.status_code}: {r.text[:300]}")
+    return r.json().get("data")
+
+
+def _proxmox_provision_script(vmid: int, conn: ConnectionConfig, backup_file: str, database: str) -> str:
+    """Script a correr NO HOST Proxmox: empurra o dump, instala DB e restaura no LXC para validação."""
+    flavor = "mariadb-server"
+    return f"""#!/usr/bin/env bash
+# VaultDB — provisionar e validar restauro no sandbox LXC {vmid} (correr no host Proxmox)
+set -euo pipefail
+VMID={vmid}
+DB="{database}"
+DUMP_LOCAL="/var/lib/vz/dump/{backup_file}"   # copie aqui o backup exportado do VaultDB
+
+echo "[1/5] Aguardar rede do container..."
+sleep 8
+echo "[2/5] Instalar servidor de base de dados..."
+pct exec $VMID -- bash -lc 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y {flavor} >/dev/null'
+pct exec $VMID -- bash -lc 'systemctl enable --now mariadb || systemctl enable --now mysql || service mariadb start'
+echo "[3/5] Criar base de dados $DB..."
+pct exec $VMID -- bash -lc "mysql -e 'CREATE DATABASE IF NOT EXISTS \\`$DB\\`;'"
+echo "[4/5] Copiar e restaurar dump..."
+pct push $VMID "$DUMP_LOCAL" /root/backup.sql
+pct exec $VMID -- bash -lc "mysql $DB < /root/backup.sql"
+echo "[5/5] Validar..."
+pct exec $VMID -- bash -lc "mysql -N -e 'SELECT COUNT(*) AS tabelas FROM information_schema.tables WHERE table_schema=\\"$DB\\";'"
+echo "OK — restauro validado no sandbox $VMID. Destrua com: DELETE /api/sandbox/proxmox/$VMID"
+"""
+
+
+@app.post("/api/sandbox/proxmox", tags=["Sandbox"])
+def create_proxmox_sandbox(req: ProxmoxSandboxRequest, user=Depends(require_auth)):
+    """Cria um LXC isolado no Proxmox para validar um restauro, sem tocar em produção."""
+    _assert_conn_access(user, req.connection_id)
+    conn = get_conn_by_id(req.connection_id)
+    database = req.database or conn.database or "restore_test"
+    if not os.path.exists(os.path.join(BACKUP_DIR, req.backup_file)):
+        raise HTTPException(404, f"Backup {req.backup_file} não encontrado")
+    cfg = _proxmox_cfg()
+
+    vmid = req.vmid or int(_proxmox_api(cfg, "GET", "/cluster/nextid"))
+    hostname = req.hostname or f"vaultdb-sbx-{vmid}"
+    root_pw = req.root_password or secrets.token_urlsafe(12)
+    payload = {
+        "vmid": vmid,
+        "ostemplate": cfg["template"],
+        "hostname": hostname,
+        "storage": cfg["storage"],
+        "memory": req.memory_mb,
+        "cores": req.cores,
+        "rootfs": f"{cfg['storage']}:{req.rootfs_gb}",
+        "password": root_pw,
+        "net0": f"name=eth0,bridge={cfg['bridge']},ip=dhcp",
+        "unprivileged": 1,
+        "start": 1,
+    }
+    task = _proxmox_api(cfg, "POST", f"/nodes/{cfg['node']}/lxc", payload)
+
+    store = load_store()
+    sandboxes = store.setdefault("sandboxes", {})
+    sandboxes[str(vmid)] = {
+        "vmid": vmid, "hostname": hostname, "node": cfg["node"],
+        "connection_id": req.connection_id, "database": database,
+        "backup_file": req.backup_file, "created": datetime.now().isoformat(),
+        "created_by": user["sub"] if isinstance(user, dict) else "admin",
+        "tenant_id": _user_tenant(user),
+    }
+    save_store(store)
+    audit_log("SANDBOX_CREATE", user["sub"] if isinstance(user, dict) else "admin",
+              str(vmid), f"Sandbox LXC {vmid} ({hostname}) p/ validar {req.backup_file}", risk="medium")
+
+    return {
+        "success": True, "vmid": vmid, "hostname": hostname, "node": cfg["node"],
+        "task": task, "root_password": root_pw,
+        "provision_script": _proxmox_provision_script(vmid, conn, req.backup_file, database),
+        "next_steps": "Corra o provision_script no host Proxmox para instalar a BD, restaurar e validar.",
+    }
+
+
+@app.get("/api/sandbox/proxmox", tags=["Sandbox"])
+def list_proxmox_sandboxes(user=Depends(require_auth)):
+    store = load_store()
+    items = store.get("sandboxes", {}).values()
+    if not _user_is_global(user):
+        items = [s for s in items if s.get("tenant_id") == _user_tenant(user)]
+    return list(items)
+
+
+@app.get("/api/sandbox/proxmox/{vmid}/status", tags=["Sandbox"])
+def proxmox_sandbox_status(vmid: int, user=Depends(require_auth)):
+    cfg = _proxmox_cfg()
+    return _proxmox_api(cfg, "GET", f"/nodes/{cfg['node']}/lxc/{vmid}/status/current")
+
+
+@app.delete("/api/sandbox/proxmox/{vmid}", tags=["Sandbox"])
+def destroy_proxmox_sandbox(vmid: int, user=Depends(require_auth)):
+    cfg = _proxmox_cfg()
+    try:
+        _proxmox_api(cfg, "POST", f"/nodes/{cfg['node']}/lxc/{vmid}/status/stop")
+        time.sleep(3)
+    except HTTPException:
+        pass
+    _proxmox_api(cfg, "DELETE", f"/nodes/{cfg['node']}/lxc/{vmid}?force=1&purge=1")
+    store = load_store()
+    store.get("sandboxes", {}).pop(str(vmid), None)
+    save_store(store)
+    audit_log("SANDBOX_DESTROY", user["sub"] if isinstance(user, dict) else "admin",
+              str(vmid), f"Sandbox LXC {vmid} destruído", risk="medium")
+    return {"success": True, "vmid": vmid}
+
 
 # ── Routes: Metrics (Prometheus) ──────────────────────────────────────────────
 
