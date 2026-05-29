@@ -47,10 +47,28 @@ Login inicial: **admin / vaultdb2024** (altere em Configurações).
 Ao criar uma tag `v*` (ex.: `git tag v2.2.0 && git push origin v2.2.0`), o workflow
 `.github/workflows/release.yml` compila e publica numa **GitHub Release**:
 
-- `VaultDB.exe` (Windows x64) + **instalador** `VaultDB-Setup-<versão>.exe` (Inno Setup)
+- `VaultDB.exe` (Windows x64) + **instalador MSI** `VaultDB-<versão>-x64.msi` (WiX)
 - `VaultDB_<versão>_macos_*.dmg` (+ `.tar.gz`) para arm64/x64
-- `VaultDB_<versão>_linux_x64.tar.gz`
+- `VaultDB-<versão>-x86_64.AppImage` (Linux) + `VaultDB_<versão>_linux_x64.tar.gz`
 - binários do **agente Go** para Linux/macOS/Windows (amd64/arm64)
+
+### Build local dos instaladores
+
+```powershell
+# Windows MSI (após dist\VaultDB.exe), a partir da raiz:
+dotnet tool install --global wix
+wix build packaging\windows_installer.wxs -d Version=2.2.3 -o out\VaultDB-2.2.3-x64.msi
+```
+
+```bash
+# Linux AppImage (após dist/VaultDB), a partir da raiz:
+mkdir -p VaultDB.AppDir/usr/bin
+cp dist/VaultDB VaultDB.AppDir/usr/bin/VaultDB
+cp packaging/appimage/AppRun VaultDB.AppDir/ && chmod +x VaultDB.AppDir/AppRun
+cp packaging/appimage/VaultDB.desktop packaging/appimage/vaultdb.svg VaultDB.AppDir/
+wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool && chmod +x appimagetool
+ARCH=x86_64 ./appimagetool VaultDB.AppDir out/VaultDB-x86_64.AppImage
+```
 
 ## Assinatura de código (opcional)
 

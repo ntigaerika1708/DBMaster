@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VaultDB Security Suite
+Comment=Backup & Disaster Recovery — painel local
+Exec=VaultDB
+Icon=vaultdb
+Categories=Utility;Database;Security;
+Terminal=true

@@ -71,12 +71,27 @@ jobs:
       - name: PyInstaller
         run: pyinstaller --clean --noconfirm packaging/vaultdb.spec
 
-      - name: Empacotar
+      - name: Empacotar (tar.gz portátil)
         run: |
           VER="${GITHUB_REF_NAME:-dev}"
           mkdir -p out
           chmod +x dist/VaultDB
           tar -czf "out/VaultDB_${VER}_linux_x64.tar.gz" -C dist VaultDB
+
+      - name: AppImage
+        continue-on-error: true
+        run: |
+          VER="${GITHUB_REF_NAME:-dev}"
+          APPDIR="VaultDB.AppDir"
+          mkdir -p "$APPDIR/usr/bin"
+          cp dist/VaultDB "$APPDIR/usr/bin/VaultDB"
+          cp packaging/appimage/AppRun "$APPDIR/AppRun" && chmod +x "$APPDIR/AppRun"
+          cp packaging/appimage/VaultDB.desktop "$APPDIR/VaultDB.desktop"
+          cp packaging/appimage/vaultdb.svg "$APPDIR/vaultdb.svg"
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          mkdir -p out
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$APPDIR" "out/VaultDB-${VER}-x86_64.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -121,13 +136,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Compress-Archive -Path dist/VaultDB.exe -DestinationPath "out/VaultDB_${ver}_windows_x64.zip" -Force
 
-      - name: Instalador Inno Setup (Setup.exe)
+      - name: Instalador MSI (WiX)
         continue-on-error: true
         shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
-          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging\windows_installer.iss" "/DMyAppVersion=$ver"
+          $raw = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { 'v0.0.0' }
+          $ver = $raw -replace '^v',''
+          dotnet tool install --global wix | Out-Null
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          wix build packaging\windows_installer.wxs -d Version=$ver -o "out\VaultDB-$ver-x64.msi"
+
+      - name: Assinar MSI (opcional, se secret configurado)
+        if: ${{ env.WIN_PFX != '' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $st = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
+          if (-not $st) { $st = "signtool" } else { $st = $st.FullName }
+          Get-ChildItem out\*.msi | ForEach-Object { & $st sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:WIN_PFX_PASS /tr http://timestamp.digicert.com /td sha256 /fd sha256 $_.FullName }
 
       - uses: actions/upload-artifact@v4
         with:

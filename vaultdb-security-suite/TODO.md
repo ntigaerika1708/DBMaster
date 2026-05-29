@@ -50,11 +50,12 @@
 - [x] Empacotamento desktop do projeto inteiro em executável Linux, Windows (`VaultDB.exe`) e macOS (`VaultDB`) via PyInstaller
 - [x] `server.py` frozen-aware (recursos no bundle; dados em `vaultdb-data/` ou `VAULTDB_HOME`)
 - [x] Build automático dos executáveis no CI ao criar tag `v*`
+- [x] Instalador MSI (WiX) no Windows e AppImage no Linux; DMG no macOS
+- [x] Assinatura/notarização opcional (Authenticode/Apple) ativada por secrets
 
 ## Próximos passos
 - [ ] Validar restore e XtraBackup ponta-a-ponta contra MySQL/MariaDB real
-- [ ] Assinar/notarizar o app macOS e assinar o `.exe` (evitar avisos de Gatekeeper/SmartScreen)
-- [ ] Instalador (MSI/DMG) além do executável solto
+- [ ] Fornecer certificados (secrets) para assinar/notarizar e remover avisos de Gatekeeper/SmartScreen
 - [ ] Regras de mascaramento LGPD personalizáveis por coluna (UI)
 - [ ] Automatizar o `pct exec` do sandbox (SSH ao host Proxmox) end-to-end
 - [ ] Publicar binários do agente Go em GitHub Releases (CI)

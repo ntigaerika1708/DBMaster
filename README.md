@@ -82,9 +82,13 @@ Dados persistentes ficam em `vaultdb-data/` junto ao executável (ou `VAULTDB_HO
 Detalhes em [`packaging/README.md`](packaging/README.md).
 
 **Builds automáticos:** ao criar uma tag `v*` (`git tag v2.2.0 && git push origin v2.2.0`), o workflow
-`.github/workflows/release.yml` publica numa **GitHub Release** os executáveis do painel para
-**Linux x64**, **Windows x64** (`VaultDB.exe`) e **macOS** (arm64/x64), além dos binários do
-**agente Go** (Linux/macOS/Windows, amd64/arm64).
+`.github/workflows/release.yml` publica numa **GitHub Release**:
+- **Linux** → `.AppImage` + `.tar.gz`
+- **Windows x64** → `VaultDB.exe` + instalador **MSI** (WiX)
+- **macOS** (arm64/x64) → `.dmg` + `.tar.gz`
+- **Agente Go** (Linux/macOS/Windows, amd64/arm64)
+
+Assinatura de código (Authenticode/Apple) é opcional e ativada via *secrets* — ver [`packaging/README.md`](packaging/README.md).
 
 ## Arquitetura
 

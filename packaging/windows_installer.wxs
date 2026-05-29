@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WiX v4/v5 — instalador MSI do VaultDB.
+     Build (após gerar dist\VaultDB.exe, a partir da raiz):
+       dotnet tool install --global wix
+       wix build packaging\windows_installer.wxs -d Version=2.2.3 -o out\VaultDB-2.2.3-x64.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="VaultDB Security Suite"
+           Manufacturer="VaultDB"
+           Version="$(Version)"
+           UpgradeCode="b2d8f1a4-6c3e-4e2a-9f7b-a1c2d3e4f501"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="Já está instalada uma versão mais recente do VaultDB." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="VaultDB">
+        <Component Id="MainExe">
+          <File Id="VaultDBExe" Source="dist\VaultDB.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="b2d8f1a4-6c3e-4e2a-9f7b-a1c2d3e4f502">
+        <Shortcut Id="AppShortcut"
+                  Name="VaultDB Security Suite"
+                  Target="[INSTALLFOLDER]VaultDB.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanupShortcut" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\VaultDB" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="VaultDB" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
