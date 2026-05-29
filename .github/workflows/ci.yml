@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  python:
+    name: Sintaxe + smoke test da app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verificar sintaxe (py_compile)
+        run: |
+          python -m compileall -q \
+            server.py tasks.py \
+            vaultdb-security-suite/server.py vaultdb-security-suite/tasks.py
+
+      - name: Instalar dependências mínimas da API
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi "uvicorn[standard]" pydantic python-multipart starlette structlog prometheus-client
+
+      - name: Smoke test — carregar a aplicação FastAPI
+        run: |
+          python - <<'PY'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("server", "server.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          assert mod.app.title, "app sem título"
+          routes = {getattr(r, "path", "") for r in mod.app.routes}
+          for needed in ("/api/restore/confirm", "/api/settings", "/api/linux-prepare/script"):
+              assert needed in routes, f"rota em falta: {needed}"
+          print("OK — app carregada:", mod.app.title, "| rotas:", len(routes))
+          PY
+
+  compose:
+    name: Validar docker-compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar ficheiros compose
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f vaultdb-security-suite/docker-compose.yml config -q

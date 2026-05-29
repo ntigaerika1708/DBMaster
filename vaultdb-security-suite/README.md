@@ -89,9 +89,11 @@ vaultdb/
 | Novo Backup | Full ou por tabelas, compressão Zstandard/GZIP, throttle I/O |
 | Meus Backups | Lista com download, restore rápido, exclusão |
 | Agendamentos | CRON personalizado, GFS, retenção configurável, alertas Telegram |
-| Restaurar | **Workflow de aprovação obrigatório via e-mail** (LGPD/Compliance) |
+| Restaurar | **Workflow de aprovação obrigatório** (e-mail SMTP ou botão/página de confirmação) — LGPD/Compliance |
+| Preparar Linux (DR) | Gera script `.sh` que instala MariaDB/MySQL, cria banco e utilizador alinhados ao backup |
 | Diagrama ER | Visualização interativa FK via INFORMATION_SCHEMA |
 | Monitoramento | Prometheus, Telegram, Proxmox Sandbox, S3/Parquet |
+| Configurações (admin) | SMTP, Telegram e gestão de utilizadores (criar/remover/senha) persistidos no store |
 | Auditoria | Trilha imutável com níveis de risco (low/medium/high/critical) |
 
 ### API B2B (JWT)
@@ -146,13 +148,23 @@ GET  /api/backups                → listar backups
 GET  /api/backups/{file}/download → download
 DELETE /api/backups/{file}       → deletar
 POST /api/restore/request        → solicitar restore (PENDENTE)
-POST /api/restore/approve/{token} → aprovar via e-mail
+GET  /api/restore/confirm?token= → página HTML de confirmação (abrir link no browser, sem 405)
+POST /api/restore/approve-submit → aprovar via formulário (token no corpo)
+POST /api/restore/approve/{token} → aprovar (JSON, usado pelo painel)
 GET  /api/restore/requests       → listar solicitações
+POST /api/linux-prepare/script   → gerar script .sh de preparação Linux (DR)
 GET  /api/schedules              → listar agendamentos
 POST /api/schedules              → criar agendamento
 DELETE /api/schedules/{id}       → remover agendamento
 GET  /api/er-diagram/{id}/{db}   → diagrama ER (FKs)
 GET  /api/audit                  → trilha de auditoria
+GET  /api/settings               → ler SMTP/Telegram (admin)
+PUT  /api/settings               → gravar SMTP/Telegram (admin)
+POST /api/settings/test-smtp     → enviar e-mail de teste (admin)
+GET  /api/users                  → listar utilizadores (admin)
+POST /api/users                  → criar utilizador (admin)
+DELETE /api/users/{username}     → remover utilizador (admin)
+POST /api/users/{username}/password → alterar palavra-passe (admin)
 POST /api/alerts/test            → testar alertas
 GET  /api/stats                  → estatísticas gerais
 GET  /metrics                    → Prometheus metrics
@@ -176,7 +188,17 @@ GET  /api/docs                   → Swagger UI
 - [ ] Sandbox Proxmox LXC automatizado
 - [ ] Exportação Parquet para AWS S3
 - [ ] Interface de aprovação de restore por e-mail (template HTML)
-- [ ] Multi-tenant (múltiplos usuários e permissões)
+- [x] Página de confirmação de restore no browser (sem erro 405)
+- [x] Multi-utilizador com papéis (admin/viewer) e gestão na UI
+- [x] Configuração de SMTP/Telegram pelo painel
+
+## Histórico de alterações recentes
+
+- **Restore MySQL robusto:** aplicação do dump via cliente `mysql`/`mariadb` em streaming; trata a linha *sandbox* do MariaDB, `LOCK TABLES` e o par `AUTOCOMMIT`. Fallback PyMySQL passa a ignorar `SET … AUTOCOMMIT`, corrigindo o erro **1231** (`autocommit can't be set to the value of 'NULL'`).
+- **Aprovação de restore:** `GET /api/restore/confirm?token=` mostra página de confirmação (resolve o **405** ao abrir o link no browser); `POST /api/restore/approve-submit` para o formulário; botão «Aprovar» no painel via JSON.
+- **Módulo Configurações (admin):** SMTP, Telegram e utilizadores persistidos em `data/store.json`.
+- **Módulo DR «Preparar Linux»** separado do fluxo de restore (`POST /api/linux-prepare/script`).
+- **Docker:** sem `container_name` fixo; na raiz de `files (5)` as portas por defeito são **8001 / 6380 / 9091** (paralelo com outro VaultDB), na pasta `vaultdb-security-suite/` mantêm-se **8000 / 6379 / 9090**.
 
 ---
 
