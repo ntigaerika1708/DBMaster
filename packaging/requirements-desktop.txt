@@ -1,0 +1,16 @@
+# Dependências mínimas para empacotar o painel desktop (PyInstaller).
+# Exclui Celery/Redis (corre em modo síncrono) e features opcionais pesadas
+# (pyarrow/pandas/boto3/pyodbc) que carregam por import tardio.
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+python-multipart>=0.0.9
+structlog>=24.1.0
+prometheus-client>=0.20.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+pymysql>=1.1.0
+psycopg2-binary>=2.9.9
+pymongo>=4.6.0
+httpx>=0.27.0
+pyinstaller>=6.6.0

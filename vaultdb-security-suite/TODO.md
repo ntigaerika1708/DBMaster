@@ -45,8 +45,16 @@
 - [x] Sandbox Proxmox LXC automatizado (`/api/sandbox/proxmox`)
 - [x] Agente Go (`agent/`): binário único + unit systemd + Makefile, validado no CI
 
+## Distribuição (entregue)
+- [x] Workflow de GitHub Releases para o agente Go (Linux/macOS/Windows, amd64/arm64)
+- [x] Empacotamento desktop do projeto inteiro em executável Windows (`VaultDB.exe`) e macOS (`VaultDB`) via PyInstaller
+- [x] `server.py` frozen-aware (recursos no bundle; dados em `vaultdb-data/` ou `VAULTDB_HOME`)
+- [x] Build automático dos executáveis no CI ao criar tag `v*`
+
 ## Próximos passos
 - [ ] Validar restore e XtraBackup ponta-a-ponta contra MySQL/MariaDB real
+- [ ] Assinar/notarizar o app macOS e assinar o `.exe` (evitar avisos de Gatekeeper/SmartScreen)
+- [ ] Instalador (MSI/DMG) além do executável solto
 - [ ] Regras de mascaramento LGPD personalizáveis por coluna (UI)
 - [ ] Automatizar o `pct exec` do sandbox (SSH ao host Proxmox) end-to-end
 - [ ] Publicar binários do agente Go em GitHub Releases (CI)

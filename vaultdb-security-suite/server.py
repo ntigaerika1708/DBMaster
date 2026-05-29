@@ -49,6 +49,7 @@ import os
 import re
 import secrets
 import shlex
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -92,8 +93,29 @@ SECRET_KEY = os.getenv("SECRET_KEY", "vaultdb-dev-secret-CHANGE-IN-PROD")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-BACKUP_DIR = os.path.join(os.path.dirname(__file__), "backups")
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+
+def _resource_dir() -> str:
+    """Diretório dos recursos empacotados (index.html). Suporta PyInstaller (frozen)."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _data_home() -> str:
+    """Diretório persistente para backups/data/store.json (fora do bundle temporário)."""
+    env = (os.getenv("VAULTDB_HOME") or "").strip()
+    if env:
+        return env
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "vaultdb-data")
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+RESOURCE_DIR = _resource_dir()
+APP_HOME = _data_home()
+BACKUP_DIR = os.path.join(APP_HOME, "backups")
+DATA_DIR = os.path.join(APP_HOME, "data")
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -2669,7 +2691,7 @@ def get_stats(user=Depends(require_auth)):
 
 @app.get("/")
 def root():
-    index = os.path.join(os.path.dirname(__file__), "index.html")
+    index = os.path.join(RESOURCE_DIR, "index.html")
     if os.path.exists(index):
         return FileResponse(index)
     return {"app": "VaultDB Security Suite", "version": "2.0.0", "docs": "/api/docs"}

@@ -62,6 +62,26 @@ Na página **Disaster Recovery → Preparar Linux**, use **“Baixar script .sh�
 
 Para **alinhar a versão byte-a-byte** com o servidor de origem, pode ser necessário configurar os repositórios oficiais Oracle ou MariaDB no Linux (o script usa os pacotes padrão da distribuição).
 
+## Executáveis desktop (Windows .exe / macOS)
+
+Para uma instalação local sem Docker, o projeto pode ser empacotado num **executável único**
+(painel + API), que arranca o servidor e abre o navegador. Corre em **modo síncrono** (sem Celery/Redis).
+
+```bash
+# Windows (PowerShell, a partir da raiz)
+powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1   # → dist\VaultDB.exe
+
+# macOS (a partir da raiz)
+bash packaging/build_macos.sh                                          # → dist/VaultDB
+```
+
+Dados persistentes ficam em `vaultdb-data/` junto ao executável (ou `VAULTDB_HOME`).
+Detalhes em [`packaging/README.md`](packaging/README.md).
+
+**Builds automáticos:** ao criar uma tag `v*` (`git tag v2.2.0 && git push origin v2.2.0`), o workflow
+`.github/workflows/release.yml` publica numa **GitHub Release** o `VaultDB.exe` (Windows x64),
+`VaultDB` (macOS arm64/x64) e os binários do **agente Go** (Linux/macOS/Windows, amd64/arm64).
+
 ## Arquitetura
 
 ```
