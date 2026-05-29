@@ -83,10 +83,13 @@ jobs:
           name: desktop-linux
           path: out/*
 
-  # ── App desktop: Windows .exe ──────────────────────────────────────────
+  # ── App desktop: Windows .exe + instalador ─────────────────────────────
   desktop-windows:
-    name: Desktop Windows (.exe)
+    name: Desktop Windows (.exe + Setup)
     runs-on: windows-latest
+    env:
+      WIN_PFX: ${{ secrets.WINDOWS_PFX_BASE64 }}
+      WIN_PFX_PASS: ${{ secrets.WINDOWS_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -101,12 +104,30 @@ jobs:
       - name: PyInstaller
         run: pyinstaller --clean --noconfirm packaging/vaultdb.spec
 
-      - name: Empacotar
+      - name: Assinar executável (opcional, se secret configurado)
+        if: ${{ env.WIN_PFX != '' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WIN_PFX))
+          $st = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
+          if (-not $st) { $st = "signtool" } else { $st = $st.FullName }
+          & $st sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:WIN_PFX_PASS /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist\VaultDB.exe
+
+      - name: Empacotar (zip portátil)
         shell: pwsh
         run: |
           $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Compress-Archive -Path dist/VaultDB.exe -DestinationPath "out/VaultDB_${ver}_windows_x64.zip" -Force
+
+      - name: Instalador Inno Setup (Setup.exe)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging\windows_installer.iss" "/DMyAppVersion=$ver"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -123,6 +144,13 @@ jobs:
         include:
           - { runner: macos-14, arch: arm64 }
           - { runner: macos-13, arch: x64 }
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -137,7 +165,39 @@ jobs:
       - name: PyInstaller
         run: pyinstaller --clean --noconfirm packaging/vaultdb.spec
 
-      - name: Empacotar
+      - name: Assinar .app (opcional, se secret configurado)
+        if: ${{ env.MACOS_CERT_P12 != '' }}
+        continue-on-error: true
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/vaultdb.keychain-db"
+          KPW="$(openssl rand -hex 16)"
+          security create-keychain -p "$KPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KPW" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN"
+          codesign --deep --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" dist/VaultDB.app
+
+      - name: Criar DMG
+        continue-on-error: true
+        run: |
+          VER="${GITHUB_REF_NAME:-dev}"
+          mkdir -p out
+          SRC="dist/VaultDB.app"; [ -d "$SRC" ] || SRC="dist/VaultDB"
+          hdiutil create -volname "VaultDB" -srcfolder "$SRC" -ov -format UDZO "out/VaultDB_${VER}_macos_${{ matrix.arch }}.dmg"
+
+      - name: Notarizar DMG (opcional, se secret configurado)
+        if: ${{ env.APPLE_ID != '' }}
+        continue-on-error: true
+        run: |
+          VER="${GITHUB_REF_NAME:-dev}"
+          DMG="out/VaultDB_${VER}_macos_${{ matrix.arch }}.dmg"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$DMG" || true
+
+      - name: Empacotar (tar.gz portátil)
         run: |
           VER="${GITHUB_REF_NAME:-dev}"
           mkdir -p out

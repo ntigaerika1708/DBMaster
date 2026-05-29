@@ -63,3 +63,17 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+# Em macOS, gera também dist/VaultDB.app (ignorado nas outras plataformas).
+app = BUNDLE(
+    exe,
+    name="VaultDB.app",
+    icon=None,
+    bundle_identifier="com.vaultdb.suite",
+    info_plist={
+        "CFBundleName": "VaultDB",
+        "CFBundleDisplayName": "VaultDB Security Suite",
+        "CFBundleShortVersionString": os.getenv("VAULTDB_VERSION", "2.2.1"),
+        "LSBackgroundOnly": False,
+    },
+)

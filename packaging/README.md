@@ -47,5 +47,35 @@ Login inicial: **admin / vaultdb2024** (altere em Configurações).
 Ao criar uma tag `v*` (ex.: `git tag v2.2.0 && git push origin v2.2.0`), o workflow
 `.github/workflows/release.yml` compila e publica numa **GitHub Release**:
 
-- `VaultDB.exe` (Windows x64) e `VaultDB-macos-*` (macOS arm64/x64)
+- `VaultDB.exe` (Windows x64) + **instalador** `VaultDB-Setup-<versão>.exe` (Inno Setup)
+- `VaultDB_<versão>_macos_*.dmg` (+ `.tar.gz`) para arm64/x64
+- `VaultDB_<versão>_linux_x64.tar.gz`
 - binários do **agente Go** para Linux/macOS/Windows (amd64/arm64)
+
+## Assinatura de código (opcional)
+
+Os binários funcionam sem assinatura, mas o Windows (SmartScreen) e o macOS (Gatekeeper)
+mostram avisos de "editor não verificado". Para assinar/notarizar automaticamente no CI,
+adicione estes **GitHub Secrets** (Settings → Secrets and variables → Actions). Sem eles,
+os passos de assinatura são saltados.
+
+**Windows (Authenticode):**
+
+| Secret | Conteúdo |
+|---|---|
+| `WINDOWS_PFX_BASE64` | certificado `.pfx` em base64 (`base64 -w0 cert.pfx`) |
+| `WINDOWS_PFX_PASSWORD` | palavra-passe do `.pfx` |
+
+**macOS (Developer ID + notarização):**
+
+| Secret | Conteúdo |
+|---|---|
+| `MACOS_CERT_P12` | certificado "Developer ID Application" `.p12` em base64 |
+| `MACOS_CERT_PASSWORD` | palavra-passe do `.p12` |
+| `MACOS_SIGN_IDENTITY` | ex.: `Developer ID Application: A Sua Empresa (TEAMID)` |
+| `APPLE_ID` | Apple ID para notarização |
+| `APPLE_TEAM_ID` | Team ID (10 caracteres) |
+| `APPLE_APP_PASSWORD` | app-specific password do Apple ID |
+
+> Estes certificados são pagos/emitidos pela Apple/CA — só você os pode fornecer.
+> O workflow já está preparado: ao definir os secrets, a próxima tag `v*` gera artefactos assinados.
