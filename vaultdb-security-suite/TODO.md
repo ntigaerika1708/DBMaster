@@ -47,7 +47,7 @@
 
 ## Distribuição (entregue)
 - [x] Workflow de GitHub Releases para o agente Go (Linux/macOS/Windows, amd64/arm64)
-- [x] Empacotamento desktop do projeto inteiro em executável Windows (`VaultDB.exe`) e macOS (`VaultDB`) via PyInstaller
+- [x] Empacotamento desktop do projeto inteiro em executável Linux, Windows (`VaultDB.exe`) e macOS (`VaultDB`) via PyInstaller
 - [x] `server.py` frozen-aware (recursos no bundle; dados em `vaultdb-data/` ou `VAULTDB_HOME`)
 - [x] Build automático dos executáveis no CI ao criar tag `v*`
 

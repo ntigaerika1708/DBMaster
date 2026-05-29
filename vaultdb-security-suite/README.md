@@ -62,7 +62,7 @@ Na página **Disaster Recovery → Preparar Linux**, use **“Baixar script .sh�
 
 Para **alinhar a versão byte-a-byte** com o servidor de origem, pode ser necessário configurar os repositórios oficiais Oracle ou MariaDB no Linux (o script usa os pacotes padrão da distribuição).
 
-## Executáveis desktop (Windows .exe / macOS)
+## Executáveis desktop (Linux / Windows .exe / macOS)
 
 Instalação local sem Docker: o projeto pode ser empacotado num **executável único** (painel + API)
 que arranca o servidor e abre o navegador (modo síncrono, sem Celery/Redis).
@@ -70,6 +70,7 @@ que arranca o servidor e abre o navegador (modo síncrono, sem Celery/Redis).
 ```bash
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1   # → dist\VaultDB.exe
 bash packaging/build_macos.sh                                          # → dist/VaultDB
+bash packaging/build_linux.sh                                          # → dist/VaultDB
 ```
 
 Detalhes em `packaging/README.md`. Ao criar uma tag `v*`, o workflow `.github/workflows/release.yml`
