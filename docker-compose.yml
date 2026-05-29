@@ -1,0 +1,110 @@
+# Stack na raiz de "files (5)" — portas por defeito deslocadas (8001 / 6380 / 9091) para subir
+# em paralelo com outro VaultDB já em 8000 / 6379 / 9090 no mesmo Docker.
+# Para usar portas clássicas (só este stack no host), no .env: HOST_PORT_DIRECTOR=8000, HOST_PORT_REDIS=6379, HOST_PORT_PROMETHEUS=9090
+#
+# Espelho: alinhe com vaultdb-security-suite/docker-compose.yml exceto estas predefinições de portas.
+# Volumes ./backups e ./data são relativos ao diretório onde corre docker compose.
+
+services:
+  director:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${HOST_PORT_DIRECTOR:-8001}:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-vaultdb-secret-change-in-production}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - PROXMOX_HOST=${PROXMOX_HOST:-}
+      - PROXMOX_TOKEN=${PROXMOX_TOKEN:-}
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY:-}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - MYSQLDUMP_SSL_MODE=${MYSQLDUMP_SSL_MODE:-DISABLED}
+      - MYSQLDUMP_EXTRA_ARGS=${MYSQLDUMP_EXTRA_ARGS:-}
+    volumes:
+      - ./backups:/app/backups
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vaultdb-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A server.celery_app worker --loglevel=info --concurrency=4 -I tasks
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-vaultdb-secret-change-in-production}
+      - MYSQLDUMP_SSL_MODE=${MYSQLDUMP_SSL_MODE:-DISABLED}
+      - MYSQLDUMP_EXTRA_ARGS=${MYSQLDUMP_EXTRA_ARGS:-}
+    volumes:
+      - ./backups:/app/backups
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vaultdb-net
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A server.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vaultdb-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${HOST_PORT_REDIS:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vaultdb-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "${HOST_PORT_PROMETHEUS:-9091}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - vaultdb-net
+
+volumes:
+  redis-data:
+  prometheus-data:
+
+networks:
+  vaultdb-net:
+    driver: bridge

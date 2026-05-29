@@ -1,0 +1,43 @@
+# Secrets & credentials
+.env
+*.key
+*.pem
+
+# Backups (never commit data)
+backups/*
+!backups/.gitkeep
+
+# App data (store regenera no deploy)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+ENV/
+dist/
+build/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+*.override.yml
+
+# Celery
+celerybeat-schedule
+celerybeat.pid

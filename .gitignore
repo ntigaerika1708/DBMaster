@@ -1,0 +1,48 @@
+# Secrets & credentials (em qualquer nível: raiz e vaultdb-security-suite/)
+.env
+**/.env
+*.key
+*.pem
+
+# Backups (nunca versionar dados / dumps com credenciais)
+**/backups/*
+!**/backups/.gitkeep
+
+# App data (store.json regenera no deploy; pode conter hashes/tokens)
+**/data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+ENV/
+dist/
+build/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+*.override.yml
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Arquivos exportados
+*.tar.gz
+*.zip

@@ -1,0 +1,18 @@
+# Build context — evita copiar dados pesados para a imagem (volumes montam backups/data em runtime)
+.git
+.gitignore
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+venv
+ENV
+.env
+.env.*
+!.env.example
+backups
+data
+*.sql
+*.log
+.cursor
+agent-transcripts
